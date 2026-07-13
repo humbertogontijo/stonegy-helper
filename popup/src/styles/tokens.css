@@ -1,0 +1,42 @@
+:root {
+  color-scheme: dark;
+
+  --shell-max-width: 560px;
+  --shell-max-height: 315px;
+
+  --bg-deep: #050607;
+  --bg-panel-start: rgba(28, 36, 39, 0.92);
+  --bg-panel-end: rgba(1, 10, 19, 0.94);
+  --bg-inset: #1c2427;
+  --bg-tile: rgba(5, 5, 5, 0.7);
+
+  --text-primary: #f0e6d2;
+  --text-body: #ded3ca;
+  --text-muted: #a09b8c;
+  --text-muted-soft: rgba(222, 211, 202, 0.66);
+
+  --gold: #c89b3c;
+  --gold-soft: #cdbe91;
+  --gold-bright: #c8aa6e;
+  --border-gold: rgba(200, 155, 60, 0.28);
+  --border-gold-strong: rgba(200, 155, 60, 0.44);
+  --border-gold-soft: rgba(200, 170, 110, 0.26);
+
+  --success: #a1de53;
+  --danger: #d65b4a;
+  --teal: #0ac8b9;
+  --blue: #2f6f9c;
+  --warning: #d7ad4b;
+
+  --btn-primary-outer-start: #ffd760;
+  --btn-primary-outer-end: #d83e00;
+  --btn-primary-inner-start: #ffb100;
+  --btn-primary-inner-end: #ab1d00;
+
+  --btn-secondary-outer-start: #5b5a56;
+  --btn-secondary-outer-end: #3c3c41;
+
+  --font-heading: "Cinzel", "Times New Roman", serif;
+  --font-body: "Barlow", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+safari/
+.DS_Store
+*.local
+safari-signing.local.json

@@ -1,0 +1,48 @@
+{
+  "name": "stonegy-helper",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "bin": {
+    "stonegy-helper": "./cli/run.mjs"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:chrome": "node scripts/build-extension.mjs",
+    "build:firefox": "node scripts/build-firefox.mjs",
+    "build:safari": "node scripts/build-safari.mjs",
+    "stonegy": "tsx cli/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate:game-data": "node scripts/generate-game-data.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/barlow": "^5.2.5",
+    "@fontsource/cinzel": "^5.2.5",
+    "@inquirer/prompts": "^8.5.2",
+    "@types/ws": "^8.18.1",
+    "commander": "^15.0.0",
+    "got-scraping": "^4.2.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.31",
+    "@tailwindcss/vite": "^4.1.8",
+    "@types/chrome": "^0.0.304",
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.1.8",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "vitest": "^3.2.4"
+  }
+}

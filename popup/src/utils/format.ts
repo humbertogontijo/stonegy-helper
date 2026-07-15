@@ -6,6 +6,7 @@ const PLAYER_STATE_LABELS: Record<PlayerState, string> = {
   hunting: "Hunting",
   selling_loot: "Selling loot",
   splitting_loot: "Splitting loot",
+  buying_bless: "Buying bless",
   training: "Training",
 };
 

@@ -188,6 +188,22 @@ export function resolveHuntSkills(preset?: BattlePreset | null): Array<string | 
   return [...DEFAULT_HUNT_SKILLS];
 }
 
+/**
+ * Skills for START_HUNT.
+ * When auto-apply presets is on, use the configured hunt preset (else live character).
+ * When off, reuse skills from the last battle-config event — do not inject a saved preset.
+ */
+export function resolveStartHuntSkills(
+  autoApplyPresets: boolean,
+  configured: BattlePreset | null | undefined,
+  characterPreset: BattlePreset
+): Array<string | null> {
+  if (!autoApplyPresets) {
+    return resolveHuntSkills(characterPreset);
+  }
+  return resolveHuntSkills(resolveBattlePreset(configured, characterPreset));
+}
+
 /** Heal slots sent via `select_heal` (1-based healIdx). */
 export function buildSelectHealPayloads(preset: BattlePreset): SelectHealPayload[] {
   return [

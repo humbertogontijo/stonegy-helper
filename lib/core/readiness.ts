@@ -4,6 +4,7 @@ import type { GameSession } from "./session";
 import {
   INTERACTIVE_COMMAND_TIMEOUT_MS,
   hasQuestContextData,
+  isBlessReady,
   isInActiveHunt,
   isPartyReady,
   isSessionBootstrapped,
@@ -11,6 +12,7 @@ import {
 
 export const PARTY_PUSH_WAIT_MS = 4_000;
 export const QUEST_PUSH_WAIT_MS = 4_000;
+export const BLESS_PUSH_WAIT_MS = 4_000;
 export const SESSION_BOOTSTRAP_WAIT_MS = 15_000;
 
 export function isBootstrapEvent(event: GameEvent): boolean {
@@ -23,6 +25,10 @@ export function isPartySnapshotEvent(event: GameEvent): boolean {
 
 export function isTasksSnapshotEvent(event: GameEvent): boolean {
   return event.kind === "json" && event.message.type === ReceiveMessageTypes.TASKS_SNAPSHOT;
+}
+
+export function isBlessSnapshotEvent(event: GameEvent): boolean {
+  return event.kind === "json" && event.message.type === ReceiveMessageTypes.BLESS_SNAPSHOT;
 }
 
 export async function awaitSessionReady(session: GameSession): Promise<void> {
@@ -45,6 +51,10 @@ export async function awaitSessionReady(session: GameSession): Promise<void> {
         timeoutMs: INTERACTIVE_COMMAND_TIMEOUT_MS,
       });
     }
+  }
+
+  if (!session.services.blessState.blessSnapshotSynced) {
+    void session.syncBlessContext({ force: true, waitForResponse: false });
   }
 }
 
@@ -104,4 +114,33 @@ export function requestPartySnapshot(session: GameSession): void {
   }
 
   void session.syncPartyContext({ force: true, waitForResponse: false });
+}
+
+export async function waitForBlessSnapshot(
+  session: GameSession,
+  options: { timeoutMs?: number } = {}
+): Promise<void> {
+  if (isBlessReady(session)) {
+    return;
+  }
+
+  const timeoutMs = options.timeoutMs ?? BLESS_PUSH_WAIT_MS;
+
+  try {
+    await session.waitFor(isBlessSnapshotEvent, timeoutMs);
+  } catch {
+    const result = await session.syncBlessContext({ force: true, timeoutMs });
+    if (result.success === false) {
+      throw new Error(result.errorMessage ?? "Could not sync bless context");
+    }
+  }
+}
+
+/** Fire-and-forget bless snapshot request for event-driven automation. */
+export function requestBlessSnapshot(session: GameSession): void {
+  if (isBlessReady(session)) {
+    return;
+  }
+
+  void session.syncBlessContext({ force: true, waitForResponse: false });
 }

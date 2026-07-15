@@ -19,6 +19,8 @@ export interface Settings {
   characterId: string | null;
   characterName: string | null;
   autoConfirmReadyCheck: boolean;
+  /** Buy missing blessings until all 7 are owned. */
+  autoBuyBless: boolean;
   autoAcceptPartyInvite: boolean;
   partyInviteAcceptMode: PartyInviteAcceptMode;
   partyInviteAllowlistNames: string[];
@@ -102,6 +104,7 @@ export function defaultSettings(): Settings {
     characterId: null,
     characterName: null,
     autoConfirmReadyCheck: false,
+    autoBuyBless: false,
     autoAcceptPartyInvite: false,
     partyInviteAcceptMode: "anyone",
     partyInviteAllowlistNames: [],

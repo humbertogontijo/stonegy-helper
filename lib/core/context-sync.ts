@@ -70,3 +70,8 @@ export function hasQuestContextData(session: GameSession): boolean {
 export function isQuestReady(session: GameSession): boolean {
   return hasQuestContextData(session);
 }
+
+/** Bless projection has been synced at least once. */
+export function isBlessReady(session: GameSession): boolean {
+  return session.services.blessState.blessSnapshotSynced;
+}

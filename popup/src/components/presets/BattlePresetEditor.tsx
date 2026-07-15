@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { InventoryEquipOption } from "../../../../lib/items";
 import type { AutoEquipSlot, BattlePreset } from "../../../../lib/types";
 import { readPercent } from "../../utils/format";
@@ -20,6 +21,8 @@ interface BattlePresetEditorProps {
   spellMins: string[];
   showAmmo: boolean;
   disabled?: boolean;
+  /** Header control outside the locked editor body (e.g. refresh). */
+  action?: ReactNode;
   updatePreset: (patch: Partial<BattlePreset>) => void;
   updateSkill: (index: number, value: string) => void;
   updateSpellMin: (index: number, value: string) => void;
@@ -38,13 +41,19 @@ export function BattlePresetEditor({
   spellMins,
   showAmmo,
   disabled = false,
+  action,
   updatePreset,
   updateSkill,
   updateSpellMin,
   updateAutoEquip,
 }: BattlePresetEditorProps) {
   return (
-    <SubFeatureSection hideTitle compact lockAutomation={disabled}>
+    <SubFeatureSection
+      title="Presets"
+      compact
+      lockAutomation={disabled}
+      action={action}
+    >
       <div className="flex flex-col gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
           Healing

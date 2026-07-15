@@ -7,6 +7,7 @@ import type {
 } from "../../protocol-messages";
 import type { HuntLootSellResult } from "../services/loot.service";
 import type { StonegyMessage } from "../../protocol";
+import type { PlayerState } from "../../types";
 
 export type GameEvent =
   | {
@@ -67,6 +68,12 @@ export type GameEvent =
   | {
       /** Fired when post-hunt sell (and optional split) are fully done and the player is idle. */
       kind: "loot_pipeline_finished";
+    }
+  | {
+      /** Fired whenever registry player activity state changes. */
+      kind: "player_state_changed";
+      previous: PlayerState;
+      playerState: PlayerState;
     };
 
 export function jsonEvent(

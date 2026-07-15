@@ -23,6 +23,7 @@ import type { MarketState } from "./services/states/market.state";
 import type { SessionViewPatch } from "./projections/patch";
 import {
   INTERACTIVE_COMMAND_TIMEOUT_MS,
+  isBlessReady,
   isInActiveHunt,
   isPartyReady,
   isQuestReady,
@@ -208,6 +209,22 @@ export class GameSession {
     );
   }
 
+  async syncBlessContext(options: {
+    force?: boolean;
+    timeoutMs?: number;
+    waitForResponse?: boolean;
+  } = {}): Promise<CommandOutcome> {
+    if (!options.force && isBlessReady(this)) {
+      return { sent: false, skipped: true, skipReason: "ready" };
+    }
+
+    return this.commands.run(SendMessageTypes.BLESS_GET_SNAPSHOT, {}, {
+      force: true,
+      timeoutMs: options.timeoutMs ?? INTERACTIVE_COMMAND_TIMEOUT_MS,
+      waitForResponse: options.waitForResponse,
+    });
+  }
+
   async ensureSessionReady(): Promise<void> {
     this.readinessChain = this.readinessChain
       .then(() => awaitSessionReady(this))
@@ -221,6 +238,9 @@ export class GameSession {
 
   async drainMessages(): Promise<void> {
     await this.messageChain;
+    await this.deferredChain;
+    await this.services.drain();
+    // State-change handlers may schedule more deferred work.
     await this.deferredChain;
   }
 

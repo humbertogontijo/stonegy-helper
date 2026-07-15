@@ -20,6 +20,13 @@ export function patchSessionView(view: SessionView, patch: SessionViewPatch): Se
     inventory: patch.inventory ? { ...view.inventory, ...patch.inventory } : view.inventory,
     market: patch.market ? { ...view.market, ...patch.market } : view.market,
     quests: patch.quests ? { ...view.quests, ...patch.quests } : view.quests,
+    bless: patch.bless
+      ? {
+          ...view.bless,
+          ...patch.bless,
+          blessings: patch.bless.blessings ?? view.bless.blessings,
+        }
+      : view.bless,
     battlePreset: patch.battlePreset
       ? { ...view.battlePreset, ...patch.battlePreset }
       : view.battlePreset,

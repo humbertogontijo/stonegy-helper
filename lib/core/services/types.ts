@@ -7,7 +7,8 @@ export type DomainStateId =
   | "trainingState"
   | "inventoryState"
   | "marketState"
-  | "tasksState";
+  | "tasksState"
+  | "blessState";
 
 /** Registry key for any registered service (domain or core). */
 export type ServiceId = FeatureId | DomainStateId;
@@ -36,7 +37,8 @@ export type SubFeatureId =
   | "tasks.autoTasker"
   | "tools.autoTraining"
   | "tools.readyCheck"
-  | "tools.acceptPartyInvite";
+  | "tools.acceptPartyInvite"
+  | "tools.autoBuyBless";
 
 export function isFeatureId(id: ServiceId): id is FeatureId {
   return (

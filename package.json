@@ -1,7 +1,7 @@
 {
   "name": "stonegy-helper",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "bin": {
     "stonegy-helper": "./cli/run.mjs"
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:chrome": "node scripts/build-extension.mjs",
+    "build:chrome": "node scripts/build-chrome.mjs",
     "build:firefox": "node scripts/build-firefox.mjs",
     "build:safari": "node scripts/build-safari.mjs",
     "stonegy": "tsx cli/main.ts",

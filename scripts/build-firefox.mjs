@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DIST_DIR = join(ROOT, "dist");
+const DIST_DIR = join(ROOT, "dist-firefox");
 const RELEASE_DIR = join(ROOT, "release");
 
 function readVersion() {
@@ -51,4 +51,6 @@ console.log(`Packaging ${zipName}...`);
 zipDist(zipPath);
 
 console.log(`Done: ${zipPath}`);
-console.log("Load in Firefox via about:debugging → This Firefox → Load Temporary Add-on → dist/manifest.json");
+console.log(
+  "Load in Firefox via about:debugging → This Firefox → Load Temporary Add-on → dist-firefox/manifest.json"
+);

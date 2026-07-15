@@ -82,9 +82,9 @@ export {
 } from "./protocol-messages";
 
 export const DEFAULT_HUNT_SKILLS: Array<string | null> = [
-  "Divine Caldera",
-  "Ethereal Spear",
-  "Avalanche Rune",
+  null,
+  null,
+  null,
   null,
 ];
 

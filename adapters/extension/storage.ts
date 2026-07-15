@@ -147,6 +147,7 @@ export async function loadPersistedSettings(characterId?: string | null): Promis
 
     Object.assign(settings, {
       autoConfirmReadyCheck: raw.autoConfirmReadyCheck,
+      autoBuyBless: raw.autoBuyBless,
       autoAcceptPartyInvite: raw.autoAcceptPartyInvite,
       partyInviteAcceptMode: raw.partyInviteAcceptMode === "allowlist" ? "allowlist" : "anyone",
       partyInviteAllowlistNames: Array.isArray(raw.partyInviteAllowlistNames)
@@ -227,6 +228,7 @@ export function pickPersistedSettings(state: BotState) {
   );
   return {
     autoConfirmReadyCheck: state.settings.autoConfirmReadyCheck,
+    autoBuyBless: state.settings.autoBuyBless,
     autoAcceptPartyInvite: state.settings.autoAcceptPartyInvite,
     partyInviteAcceptMode: state.settings.partyInviteAcceptMode,
     partyInviteAllowlistNames: state.settings.partyInviteAllowlistNames,

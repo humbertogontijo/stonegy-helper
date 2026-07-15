@@ -35,7 +35,7 @@ function zipDist(outputPath) {
 }
 
 const version = readVersion();
-const zipName = `stonegy-helper-v${version}.zip`;
+const zipName = `stonegy-helper-chrome-v${version}.zip`;
 const zipPath = join(RELEASE_DIR, zipName);
 
 console.log("Typechecking...");

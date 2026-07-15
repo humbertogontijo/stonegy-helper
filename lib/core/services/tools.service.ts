@@ -1,3 +1,4 @@
+import { hasAllBlessings, nextAffordableBlessing } from "../../domain/bless";
 import { featureCooldown, LONG_COOLDOWN, BURST_COOLDOWN, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity, readPartyMemberCount } from "../humanize";
 import { SendMessageTypes, ReceiveMessageTypes } from "../../protocol";
@@ -7,8 +8,13 @@ import {
   isInActiveHunt,
   isInActiveTraining,
 } from "../context-sync";
+import { requestBlessSnapshot, waitForBlessSnapshot } from "../readiness";
 import type { GameEvent } from "../events/types";
-import { canRunIdleAutomation } from "../player-state";
+import {
+  canRunIdleAutomation,
+  isPlayerIdling,
+  updatePlayerState,
+} from "../player-state";
 import { isPartyInviteSenderAllowed } from "../../domain/party/invite-filter";
 import {
   defaultAutoTrainingSkill,
@@ -19,6 +25,7 @@ import type { FeatureId } from "./types";
 import type { TrainingState } from "./states/training.state";
 import type { PartyState } from "./states/party.state";
 import type { SessionState } from "./states/session.state";
+import type { BlessState } from "./states/bless.state";
 import type { HuntService } from "./hunt.service";
 
 export const DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC = 5;
@@ -27,6 +34,7 @@ export type ToolsFlowPhase =
   | "idle"
   | "preparing"
   | "confirming_ready"
+  | "buying_bless"
   | "accepting_invite"
   | "waiting_idle"
   | "starting_training"
@@ -72,11 +80,21 @@ export class ToolsService extends Service {
   private acceptedPartyInviteIds: string[] = [];
   private autoTrainingTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Ready-check id waiting on blessings (sync / auto-buy / manual buy).
+   * Cleared after confirm, decline, or when the party ready-check disappears.
+   */
+  private pendingReadyCheckId: string | null = null;
+
+  /** Prevents overlapping auto-buy runs from snapshot + ready-check kickoffs. */
+  private buyingBlessings = false;
+
   constructor(
     ctx: ServiceContext,
     private readonly trainingState: TrainingState,
     private readonly partyState: PartyState,
-    private readonly sessionState: SessionState
+    private readonly sessionState: SessionState,
+    private readonly blessState: BlessState
   ) {
     super(ctx);
   }
@@ -101,6 +119,7 @@ export class ToolsService extends Service {
       toolsFlow: { ...this.flow },
       confirmedReadyCheckIds: [...this.confirmedReadyCheckIds],
       acceptedPartyInviteIds: [...this.acceptedPartyInviteIds],
+      pendingReadyCheckId: this.pendingReadyCheckId,
       autoTrainingPending: this.autoTrainingTimer != null,
     };
   }
@@ -114,16 +133,24 @@ export class ToolsService extends Service {
     return [...this.acceptedPartyInviteIds];
   }
 
+  getPendingReadyCheckId(): string | null {
+    return this.pendingReadyCheckId;
+  }
+
   /** Seed runtime IDs (tests / migration). */
   seedRuntimeIds(options: {
     confirmedReadyCheckIds?: string[];
     acceptedPartyInviteIds?: string[];
+    pendingReadyCheckId?: string | null;
   }): void {
     if (options.confirmedReadyCheckIds) {
       this.confirmedReadyCheckIds = [...options.confirmedReadyCheckIds];
     }
     if (options.acceptedPartyInviteIds) {
       this.acceptedPartyInviteIds = [...options.acceptedPartyInviteIds];
+    }
+    if (options.pendingReadyCheckId !== undefined) {
+      this.pendingReadyCheckId = options.pendingReadyCheckId;
     }
   }
 
@@ -132,11 +159,43 @@ export class ToolsService extends Service {
   }
 
   async onEvent(event: GameEvent): Promise<void> {
+    if (event.kind === "player_state_changed") {
+      if (event.playerState === "idling" && this.pendingReadyCheckId) {
+        // Confirm is deferred off this dispatch so the PARTY_SNAPSHOT ack can land.
+        this.ctx.session.deferFromWire(() => this.tryFulfillPendingReadyCheck());
+      }
+      return;
+    }
+
     if (event.kind !== "json") {
       return;
     }
 
     const settings = this.ctx.settings.get();
+
+    if (isJsonEvent(event, ReceiveMessageTypes.BLESS_SNAPSHOT)) {
+      this.ctx.session.deferFromWire(async () => {
+        if (settings.autoBuyBless) {
+          await this.buyMissingBlessings();
+        }
+        await this.tryFulfillPendingReadyCheck();
+      });
+    }
+
+    if (
+      settings.autoBuyBless &&
+      isJsonEvent(event, ReceiveMessageTypes.PARTY_SNAPSHOT) &&
+      !this.playerHasAllBlessings()
+    ) {
+      if (!this.blessState.blessSnapshotSynced) {
+        requestBlessSnapshot(this.ctx.session);
+      } else {
+        this.ctx.session.deferFromWire(async () => {
+          await this.buyMissingBlessings();
+          await this.tryFulfillPendingReadyCheck();
+        });
+      }
+    }
 
     if (
       isJsonEvent(event, ReceiveMessageTypes.PARTY_SNAPSHOT) &&
@@ -157,6 +216,143 @@ export class ToolsService extends Service {
   }
 
   /**
+   * Confirm a remembered ready-check when idle with all blessings.
+   * Otherwise leave pending and wait for player_state_changed / bless updates.
+   */
+  async tryFulfillPendingReadyCheck(): Promise<void> {
+    const readyCheckId = this.pendingReadyCheckId;
+    if (!readyCheckId || !this.shouldAutoConfirmReadyCheck()) {
+      return;
+    }
+    if (this.confirmedReadyCheckIds.includes(readyCheckId)) {
+      this.pendingReadyCheckId = null;
+      return;
+    }
+    if (!this.blessState.blessSnapshotSynced) {
+      requestBlessSnapshot(this.ctx.session);
+      return;
+    }
+    if (!this.playerHasAllBlessings()) {
+      if (this.ctx.settings.get().autoBuyBless) {
+        await this.buyMissingBlessings();
+        if (!this.playerHasAllBlessings()) {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    if (!isPlayerIdling(this.ctx.session)) {
+      return;
+    }
+
+    await this.scheduleReadyCheckConfirm(readyCheckId);
+  }
+
+  private playerHasAllBlessings(): boolean {
+    return hasAllBlessings(this.blessState.projection());
+  }
+
+  /**
+   * Buy unowned blessings cheapest-first while gold allows.
+   * Public so HuntService can call it before START_HUNT when autoBuyBless is on.
+   */
+  async buyMissingBlessings(): Promise<{ ok: boolean; error?: string; bought?: number }> {
+    if (!this.ctx.settings.get().autoBuyBless) {
+      return { ok: false, error: "Auto buy bless is off." };
+    }
+    if (this.buyingBlessings) {
+      return { ok: true, bought: 0 };
+    }
+    if (this.playerHasAllBlessings()) {
+      return { ok: true, bought: 0 };
+    }
+
+    this.buyingBlessings = true;
+    updatePlayerState(this.ctx.session, "buying_bless", "Buying blessings…");
+    try {
+      return await this.run("bless", () =>
+        this.traceFlow("auto-buy-bless", async (trace) => {
+          if (!this.blessState.blessSnapshotSynced) {
+            try {
+              await waitForBlessSnapshot(this.ctx.session);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Could not sync blessings.";
+              trace.finish("failed", { error: message });
+              return { ok: false as const, error: message, bought: 0 };
+            }
+          }
+
+          if (this.playerHasAllBlessings()) {
+            trace.finish("skipped", { error: "already blessed" });
+            return { ok: true as const, bought: 0 };
+          }
+
+          this.setFlowPhase("buying_bless", { startedAt: Date.now(), lastError: null });
+          trace.setPhase("buying_bless");
+
+          let bought = 0;
+          let remainingGold = this.sessionState.goldCoins;
+          while (!this.playerHasAllBlessings()) {
+            const next = nextAffordableBlessing(this.blessState.blessings, remainingGold);
+            trace.guard("has_affordable_blessing", next != null);
+            if (!next) {
+              const owned = this.blessState.ownedCount ?? 0;
+              const error = `Not enough gold for remaining blessings (${owned}/7).`;
+              this.setFlowPhase("failed", { lastError: error });
+              this.setFlowPhase("idle", { startedAt: null });
+              trace.finish("failed", { error });
+              return { ok: false as const, error, bought };
+            }
+
+            const outcome = await this.ctx.session.commands.run(
+              SendMessageTypes.BLESS_BUY,
+              { blessingId: next.id },
+              { cooldownMs: featureCooldown("tools.autoBuyBless") }
+            );
+            trace.command({
+              type: SendMessageTypes.BLESS_BUY,
+              success: outcome.success !== false && !outcome.skipped,
+              skipped: outcome.skipped,
+              skipReason: outcome.skipReason,
+              error: outcome.success === false ? outcome.errorMessage : undefined,
+            });
+
+            if (outcome.skipped || outcome.success === false) {
+              const error = outcome.errorMessage ?? "Bless buy failed.";
+              this.setFlowPhase("failed", { lastError: error });
+              this.setFlowPhase("idle", { startedAt: null });
+              trace.finish("failed", { error });
+              return { ok: false as const, error, bought };
+            }
+
+            this.blessState.markOwned(next.id);
+            if (remainingGold != null) {
+              remainingGold = Math.max(0, remainingGold - next.cost);
+            }
+            bought += 1;
+          }
+
+          void this.ctx.session.syncBlessContext({ force: true, waitForResponse: false });
+          this.setFlowPhase("idle", { startedAt: null, lastError: null });
+          trace.finish("ok", { result: { bought } });
+          return { ok: true as const, bought };
+        })
+      );
+    } finally {
+      this.buyingBlessings = false;
+      if (this.ctx.session.services.getPlayerState().playerState === "buying_bless") {
+        updatePlayerState(
+          this.ctx.session,
+          "idling",
+          this.playerHasAllBlessings() ? "Blessings ready" : "Bless buy stopped"
+        );
+      }
+    }
+  }
+
+  /**
    * Confirm ready-checks when the Tools toggle is on, or when Hunt is mid start/restart
    * (so auto-hunt is not blocked by a party ready-check with the Tools toggle off).
    */
@@ -168,20 +364,21 @@ export class ToolsService extends Service {
     return hunt?.isAwaitingHuntStart() === true;
   }
 
-  private hasActionableReadyCheck(data: PartySnapshotPayload | undefined): boolean {
+  /** Unresolved ready-check the helper should eventually confirm (blessings may still be missing). */
+  private unresolvedReadyCheckId(data: PartySnapshotPayload | undefined): string | null {
     if (!this.shouldAutoConfirmReadyCheck()) {
-      return false;
+      return null;
     }
 
     const readyCheck = data?.party?.readyCheck;
     const meId = data?.meId ?? this.sessionState.characterId;
 
     if (!readyCheck || typeof readyCheck.id !== "string" || !meId) {
-      return false;
+      return null;
     }
 
     if (this.confirmedReadyCheckIds.includes(readyCheck.id)) {
-      return false;
+      return null;
     }
 
     const memberStatuses = readyCheck.memberStatuses ?? {};
@@ -189,11 +386,59 @@ export class ToolsService extends Service {
 
     // Already resolved — nothing to do.
     if (myStatus === "confirmed" || myStatus === "declined") {
-      return false;
+      return null;
     }
 
-    // pending, absent, or any other unresolved status — confirm (leader or member).
-    return true;
+    // pending, absent, or any other unresolved status — eligible (leader or member).
+    return readyCheck.id;
+  }
+
+  private async scheduleReadyCheckConfirm(readyCheckId: string): Promise<void> {
+    // Claim immediately so duplicate snapshots don't schedule a second confirm.
+    this.confirmedReadyCheckIds = [readyCheckId, ...this.confirmedReadyCheckIds].slice(0, 20);
+    this.pendingReadyCheckId = null;
+
+    // Off the wire chain so the confirm's PARTY_SNAPSHOT ack can be processed.
+    this.ctx.session.deferFromWire(() =>
+      this.run("party", async () => {
+        await this.traceFlow("ready-check-confirm", async (confirmTrace) => {
+          // Safety net — tryFulfill only runs while idle, so this is usually a no-op.
+          if (isInActiveTraining(this.ctx.session)) {
+            await this.finishTrainingIfActive();
+            await delay(LONG_COOLDOWN);
+          }
+
+          this.setFlowPhase("confirming_ready");
+          confirmTrace.setPhase("confirming_ready");
+
+          const outcome = await this.ctx.session.commands.run(
+            SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
+            { readyCheckId },
+            { cooldownMs: featureCooldown("tools.readyCheck") }
+          );
+          confirmTrace.command({
+            type: SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
+            success: outcome.success !== false,
+            error: outcome.success === false ? outcome.errorMessage : undefined,
+          });
+
+          if (outcome.success === false) {
+            this.confirmedReadyCheckIds = this.confirmedReadyCheckIds.filter(
+              (id) => id !== readyCheckId
+            );
+            this.pendingReadyCheckId = readyCheckId;
+            this.setFlowPhase("failed", {
+              lastError: outcome.errorMessage ?? "Ready check confirm failed",
+            });
+            this.setFlowPhase("idle", { startedAt: null });
+            confirmTrace.finish("failed", { error: outcome.errorMessage });
+            return;
+          }
+
+          this.setFlowPhase("idle", { startedAt: null, lastError: null });
+        });
+      })
+    );
   }
 
   private findPendingPartyInvite(data: PartySnapshotPayload | undefined) {
@@ -248,6 +493,13 @@ export class ToolsService extends Service {
       );
     }
 
+    // Clear locally so idle gates / ready-check can proceed before TRAINING_FINISHED arrives.
+    this.trainingState.applyTrainingPatch({ activeTrainingId: null });
+    if (this.partyState.partyStatus === "training") {
+      this.partyState.setPartyStatus("idle");
+    }
+    updatePlayerState(this.ctx.session, "idling", "Left training");
+
     return { finished: true };
   }
 
@@ -287,58 +539,63 @@ export class ToolsService extends Service {
 
     await this.traceFlow("ready-check", async (trace) => {
       const data = event.message.data as PartySnapshotPayload | undefined;
-      const actionable = this.hasActionableReadyCheck(data);
-      trace.guard("actionable_ready_check", actionable);
-      if (!actionable) {
+      const readyCheckId = this.unresolvedReadyCheckId(data);
+      trace.guard("unresolved_ready_check", readyCheckId != null);
+
+      if (!readyCheckId) {
+        // Ready-check ended or was resolved — drop any remembered wait.
+        if (data?.party != null && data.party.readyCheck == null) {
+          this.pendingReadyCheckId = null;
+        }
         trace.finish("skipped");
         return;
       }
 
-      const readyCheck = data?.party?.readyCheck;
-      if (!readyCheck || typeof readyCheck.id !== "string") {
-        trace.finish("skipped");
+      // Remember until idle + blessings are ready (player_state_changed retries).
+      this.pendingReadyCheckId = readyCheckId;
+
+      if (!this.blessState.blessSnapshotSynced) {
+        requestBlessSnapshot(this.ctx.session);
+        trace.guard("bless_synced", false);
+        trace.finish("skipped", { error: "awaiting_bless_sync" });
         return;
       }
 
-      // Confirm off the wire chain so the confirm's PARTY_SNAPSHOT ack can be processed.
-      const readyCheckId = readyCheck.id;
-      // Claim immediately so duplicate snapshots don't schedule a second confirm.
-      this.confirmedReadyCheckIds = [readyCheckId, ...this.confirmedReadyCheckIds].slice(0, 20);
-      this.ctx.session.deferFromWire(() =>
-        this.run("party", async () => {
-          await this.traceFlow("ready-check-confirm", async (confirmTrace) => {
-            await this.prepareForPartyAction({ leaveHunt: false });
-            this.setFlowPhase("confirming_ready");
-            confirmTrace.setPhase("confirming_ready");
-
-            const outcome = await this.ctx.session.commands.run(
-              SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
-              { readyCheckId },
-              { cooldownMs: featureCooldown("tools.readyCheck") }
-            );
-            confirmTrace.command({
-              type: SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
-              success: outcome.success !== false,
-              error: outcome.success === false ? outcome.errorMessage : undefined,
-            });
-
-            if (outcome.success === false) {
-              this.confirmedReadyCheckIds = this.confirmedReadyCheckIds.filter(
-                (id) => id !== readyCheckId
-              );
-              this.setFlowPhase("failed", {
-                lastError: outcome.errorMessage ?? "Ready check confirm failed",
-              });
-              this.setFlowPhase("idle", { startedAt: null });
-              confirmTrace.finish("failed", { error: outcome.errorMessage });
-              return;
-            }
-
-            this.setFlowPhase("idle", { startedAt: null, lastError: null });
+      if (!this.playerHasAllBlessings()) {
+        trace.guard("has_all_blessings", false);
+        if (this.ctx.settings.get().autoBuyBless) {
+          this.ctx.session.deferFromWire(async () => {
+            await this.buyMissingBlessings();
+            await this.tryFulfillPendingReadyCheck();
           });
-        })
-      );
+          trace.finish("ok", { result: { deferred: true, buyingBless: true, readyCheckId } });
+          return;
+        }
+        trace.finish("skipped", { error: "missing_blessings" });
+        return;
+      }
 
+      if (!isPlayerIdling(this.ctx.session)) {
+        trace.guard("player_idling", false);
+        // Leave training so we become idle; loot/buy_bless wait for their own state change.
+        if (isInActiveTraining(this.ctx.session)) {
+          this.ctx.session.deferFromWire(() =>
+            this.run("party", async () => {
+              this.setFlowPhase("preparing", { startedAt: Date.now() });
+              await this.finishTrainingIfActive();
+              await delay(LONG_COOLDOWN);
+              await this.tryFulfillPendingReadyCheck();
+            })
+          );
+          trace.finish("ok", { result: { deferred: true, leavingTraining: true, readyCheckId } });
+          return;
+        }
+        trace.finish("skipped", { error: "awaiting_idle" });
+        return;
+      }
+
+      trace.guard("player_idling", true);
+      await this.tryFulfillPendingReadyCheck();
       trace.finish("ok", { result: { deferred: true, readyCheckId } });
     });
   }
@@ -430,7 +687,7 @@ export class ToolsService extends Service {
           return;
         }
 
-        if (this.hasActionablePartyInvite(data) || this.hasActionableReadyCheck(data)) {
+        if (this.hasActionablePartyInvite(data) || this.unresolvedReadyCheckId(data) != null) {
           this.scheduleAutoTrainingCheck(LONG_COOLDOWN);
           trace.finish("skipped", { result: "defer_for_party_action" });
           return;

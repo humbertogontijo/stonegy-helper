@@ -39,6 +39,8 @@ export type CanRestartHuntInput = {
   handlingLoot: boolean;
   /** When true, party/hunt is already active — restart should not start again. */
   alreadyHunting?: boolean;
+  /** When false, restart must wait until the player has all 7 blessings. */
+  hasAllBlessings?: boolean;
 };
 
 /** Shared restart eligibility for HUNT_FINISHED / PARTY_SNAPSHOT auto-restart. */
@@ -58,6 +60,9 @@ export function canRestartHunt(input: CanRestartHuntInput): boolean {
   if (input.alreadyHunting) {
     return false;
   }
+  if (input.hasAllBlessings === false) {
+    return false;
+  }
   return true;
 }
 
@@ -68,6 +73,7 @@ export type CanEnableAutoHuntInput = {
   hasCharacterId: boolean;
   partySnapshotSynced: boolean;
   isLeader: boolean;
+  hasAllBlessings: boolean;
 };
 
 export type EnableAutoHuntBlockReason =
@@ -76,7 +82,8 @@ export type EnableAutoHuntBlockReason =
   | "tasker_controls"
   | "no_character"
   | "party_not_synced"
-  | "not_leader";
+  | "not_leader"
+  | "missing_blessings";
 
 /** Pure enable-auto-hunt prechecks (party wait / start are service I/O). */
 export function enableAutoHuntBlockReason(
@@ -99,6 +106,9 @@ export function enableAutoHuntBlockReason(
   }
   if (!input.isLeader) {
     return "not_leader";
+  }
+  if (!input.hasAllBlessings) {
+    return "missing_blessings";
   }
   return null;
 }

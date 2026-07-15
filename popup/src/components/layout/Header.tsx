@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import stonegyLogo from "../../assets/stonegy-logo.svg";
+import { REQUIRED_BLESSING_COUNT } from "../../../../lib/domain/bless";
 import { resolveDisplayedStaminaMs } from "../../../../lib/stamina";
 import type { BotState } from "../../../../lib/types";
 import { formatGold, formatPlayerState, formatStamina, titleCase } from "../../utils/format";
@@ -22,6 +23,20 @@ function formatPartyLabel(state: BotState | null): string {
     return "Solo";
   }
   return `${Math.min(count, MAX_PARTY_SIZE)}/${MAX_PARTY_SIZE}`;
+}
+
+function formatBlessLabel(state: BotState | null): string {
+  const total =
+    state?.bless?.blessings.length && state.bless.blessings.length > 0
+      ? state.bless.blessings.length
+      : REQUIRED_BLESSING_COUNT;
+  const owned =
+    state?.bless?.ownedCount != null
+      ? state.bless.ownedCount
+      : state?.bless?.blessSnapshotSynced
+        ? 0
+        : null;
+  return `${owned ?? "—"}/${total}`;
 }
 
 export function Header({
@@ -61,6 +76,7 @@ export function Header({
   }, [state?.character.characterVocation, state?.character.level, compact]);
 
   const partyLabel = formatPartyLabel(state);
+  const blessLabel = formatBlessLabel(state);
   const playerState = formatPlayerState(state?.playerState);
   const gold = state?.character.goldCoins != null ? formatGold(state.character.goldCoins) : "—";
   const stamina = formatStamina(resolveDisplayedStaminaMs(state, now));
@@ -100,6 +116,15 @@ export function Header({
               ·
             </span>
             <span className="truncate text-[10px] text-[var(--text-body)] tabular-nums">{stamina}</span>
+            <span className="text-[var(--text-muted)]" aria-hidden>
+              ·
+            </span>
+            <span
+              className="truncate text-[10px] text-[var(--text-body)] tabular-nums"
+              title="Blessings"
+            >
+              {blessLabel} bless
+            </span>
             <span className="text-[var(--text-muted)]" aria-hidden>
               ·
             </span>

@@ -5,6 +5,8 @@ interface SubFeatureSectionProps {
   title?: string;
   description?: string;
   hideTitle?: boolean;
+  /** Header control rendered outside the locked body (e.g. refresh). */
+  action?: ReactNode;
   /** Tighter padding/gaps for dense sub-feature control columns. */
   compact?: boolean;
   disabled?: boolean;
@@ -18,12 +20,14 @@ export function SubFeatureSection({
   title,
   description,
   hideTitle = false,
+  action,
   compact = false,
   disabled = false,
   lockAutomation = false,
   children,
 }: SubFeatureSectionProps) {
   const bodyLocked = disabled || lockAutomation;
+  const showTitle = !hideTitle && title;
 
   return (
     <section
@@ -31,15 +35,22 @@ export function SubFeatureSection({
         compact ? "px-2 py-1.5" : "px-2.5 py-2.5"
       }`}
     >
-      {!hideTitle && title ? (
-        <div className={compact ? "mb-1.5" : "mb-2"}>
-          <h3 className="m-0 text-xs font-bold uppercase tracking-wide text-[var(--text-primary)]">
-            {order != null ? `${order}. ` : ""}
-            {title}
-          </h3>
-          {description ? (
-            <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">{description}</p>
-          ) : null}
+      {showTitle || action ? (
+        <div
+          className={`flex items-start justify-between gap-2 ${compact ? "mb-1.5" : "mb-2"}`}
+        >
+          <div className="min-w-0 flex-1">
+            {showTitle ? (
+              <h3 className="m-0 text-xs font-bold uppercase tracking-wide text-[var(--text-primary)]">
+                {order != null ? `${order}. ` : ""}
+                {title}
+              </h3>
+            ) : null}
+            {showTitle && description ? (
+              <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">{description}</p>
+            ) : null}
+          </div>
+          {action ? <div className="shrink-0">{action}</div> : null}
         </div>
       ) : null}
 

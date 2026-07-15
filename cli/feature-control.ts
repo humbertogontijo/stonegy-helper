@@ -134,6 +134,8 @@ function settingsPatchForSubFeature(
       return { autoSplitLootOnHuntFinished: enabled };
     case "tools.readyCheck":
       return { autoConfirmReadyCheck: enabled };
+    case "tools.autoBuyBless":
+      return { autoBuyBless: enabled };
     case "tools.acceptPartyInvite":
       return { autoAcceptPartyInvite: enabled };
     case "tools.autoTraining":
@@ -191,6 +193,7 @@ export function collectPersistedSettings(ctx: FeatureControlContext): Partial<Se
   const state = ctx.getState();
   return {
     autoConfirmReadyCheck: state.settings.autoConfirmReadyCheck,
+    autoBuyBless: state.settings.autoBuyBless,
     autoAcceptPartyInvite: state.settings.autoAcceptPartyInvite,
     partyInviteAcceptMode: state.settings.partyInviteAcceptMode,
     partyInviteAllowlistNames: state.settings.partyInviteAllowlistNames,

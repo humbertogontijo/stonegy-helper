@@ -1,4 +1,4 @@
-import type { PartyLootSplitter } from "../../protocol-messages";
+import type { Blessing, PartyLootSplitter } from "../../protocol-messages";
 import type { StaminaConfig } from "../../stamina";
 import type { InventoryItemEntry } from "../../binary/types";
 import type {
@@ -110,6 +110,16 @@ export interface QuestProjection {
   activeMonsterTasks: ActiveMonsterTask[];
 }
 
+export interface BlessProjection {
+  blessSnapshotSynced: boolean;
+  ownedCount: number | null;
+  skillLossReductionPercent: number | null;
+  itemLossPercent: number | null;
+  hasAolEquipped: boolean | null;
+  blessings: Blessing[];
+  lastSnapshotAt: number | null;
+}
+
 export interface SessionView {
   connection: ConnectionProjection;
   character: CharacterProjection;
@@ -119,6 +129,7 @@ export interface SessionView {
   inventory: InventoryProjection;
   market: MarketProjection;
   quests: QuestProjection;
+  bless: BlessProjection;
   playerState: PlayerState;
   playerStateDetail: string;
   battlePreset: BattlePreset;

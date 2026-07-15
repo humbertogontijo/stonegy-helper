@@ -60,7 +60,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: "dist",
+      // Keep Firefox out of `dist/` so loading that folder in Chrome never
+      // hits MV2-only `background.scripts` from a Firefox build.
+      outDir: browser === "firefox" ? "dist-firefox" : "dist",
       emptyOutDir: true,
     },
   };

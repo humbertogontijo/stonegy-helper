@@ -1,3 +1,4 @@
+import { hasAllBlessings } from "../../domain/bless";
 import { isStartableHuntId } from "../../hunts";
 import {
   canRestartHunt,
@@ -8,7 +9,7 @@ import {
 import { isLootSellEnabled } from "../../domain/loot-sell";
 import { featureCooldown, PIPELINE_COOLDOWNS, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity } from "../humanize";
-import { resolveHuntSkills, resolveBattlePreset } from "../../presets";
+import { resolveStartHuntSkills } from "../../presets";
 import { getHuntBattleSettings } from "../settings";
 import { SendMessageTypes, ReceiveMessageTypes } from "../../protocol";
 import {
@@ -17,7 +18,7 @@ import {
   isPartyReady,
   resolveStartHuntTimeoutMs,
 } from "../context-sync";
-import { waitForPartySnapshot } from "../readiness";
+import { waitForBlessSnapshot, waitForPartySnapshot } from "../readiness";
 import { isHandlingLoot, updatePlayerState } from "../player-state";
 import type { BotState } from "../../types";
 import type { FlowTraceRecorder } from "../events/flow-trace";
@@ -27,6 +28,7 @@ import type { FeatureId } from "./types";
 import type { HuntState } from "./states/hunt.state";
 import type { PartyState } from "./states/party.state";
 import type { SessionState } from "./states/session.state";
+import type { BlessState } from "./states/bless.state";
 import type { BattleService } from "./battle.service";
 import type { LootService } from "./loot.service";
 
@@ -66,6 +68,7 @@ export class HuntService extends Service {
     private readonly huntState: HuntState,
     private readonly partyState: PartyState,
     private readonly sessionState: SessionState,
+    private readonly blessState: BlessState,
     private readonly battle: BattleService
   ) {
     super(ctx);
@@ -77,6 +80,55 @@ export class HuntService extends Service {
 
   private isHunting(): boolean {
     return this.huntState.isActivelyHunting();
+  }
+
+  private playerHasAllBlessings(): boolean {
+    return hasAllBlessings(this.blessState.projection());
+  }
+
+  /**
+   * Sync blessings (and auto-buy when enabled) before START_HUNT.
+   * Auto-hunt / auto-tasker must not enter a hunt without all 7.
+   */
+  private async ensureAllBlessingsForHunt(
+    trace?: FlowTraceRecorder
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!this.blessState.blessSnapshotSynced) {
+      try {
+        await waitForBlessSnapshot(this.ctx.session);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Could not sync blessings.";
+        trace?.guard("bless_synced", false, message);
+        return { ok: false, error: message };
+      }
+    }
+
+    if (this.playerHasAllBlessings()) {
+      trace?.guard("has_all_blessings", true);
+      return { ok: true };
+    }
+
+    if (this.ctx.settings.get().autoBuyBless) {
+      const tools = this.ctx.session.services.tryGet("tools") as
+        | { buyMissingBlessings: () => Promise<{ ok: boolean; error?: string }> }
+        | undefined;
+      if (tools) {
+        await tools.buyMissingBlessings();
+      }
+    }
+
+    const ready = this.playerHasAllBlessings();
+    trace?.guard("has_all_blessings", ready);
+    if (ready) {
+      return { ok: true };
+    }
+
+    const owned = this.blessState.ownedCount ?? 0;
+    return {
+      ok: false,
+      error: `Need all 7 blessings before starting a hunt (have ${owned}/7).`,
+    };
   }
 
   private setFlowPhase(
@@ -172,6 +224,7 @@ export class HuntService extends Service {
         autoTaskerEnabled: settings.autoTaskerEnabled,
         handlingLoot,
         alreadyHunting,
+        hasAllBlessings: this.playerHasAllBlessings(),
       });
 
       trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
@@ -179,6 +232,7 @@ export class HuntService extends Service {
       trace.guard("is_leader", isLeader);
       trace.guard("hunt_valid", huntValid);
       trace.guard("not_already_hunting", !alreadyHunting);
+      trace.guard("has_all_blessings", this.playerHasAllBlessings());
 
       if (!canRestart || selectedHuntId == null || !huntValid) {
         trace.finish("skipped", { error: "restart guards failed" });
@@ -263,10 +317,12 @@ export class HuntService extends Service {
           autoHuntEnabled: settings.autoHuntEnabled,
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot: false,
+          hasAllBlessings: this.playerHasAllBlessings(),
         });
         trace.guard("can_restart", canRestart);
         trace.guard("is_leader", isLeader);
         trace.guard("has_selected_hunt", selectedHuntId != null);
+        trace.guard("has_all_blessings", this.playerHasAllBlessings());
 
         if (!canRestart || selectedHuntId == null) {
           trace.finish("skipped", { error: "restart guards failed" });
@@ -300,6 +356,7 @@ export class HuntService extends Service {
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot,
           alreadyHunting,
+          hasAllBlessings: this.playerHasAllBlessings(),
         });
 
         trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
@@ -307,6 +364,7 @@ export class HuntService extends Service {
         trace.guard("is_leader", isLeader);
         trace.guard("hunt_valid", huntValid);
         trace.guard("not_already_hunting", !alreadyHunting);
+        trace.guard("has_all_blessings", this.playerHasAllBlessings());
 
         if (!canRestart || selectedHuntId == null || !huntValid) {
           trace.finish("skipped", { error: "restart guards failed" });
@@ -388,6 +446,14 @@ export class HuntService extends Service {
       return { ok: true };
     }
 
+    const blessGate = await this.ensureAllBlessingsForHunt(trace);
+    if (!blessGate.ok) {
+      this.setFlowPhase("failed", { lastError: blessGate.error ?? "missing blessings" });
+      this.setFlowPhase("idle");
+      trace?.finish("failed", { error: blessGate.error });
+      return { ok: false, error: blessGate.error };
+    }
+
     if (!options.restarting) {
       this.setFlowPhase("preparing_party", {
         startedAt: this.flow.startedAt ?? Date.now(),
@@ -439,11 +505,10 @@ export class HuntService extends Service {
       SendMessageTypes.START_HUNT,
       {
         huntId,
-        skillsSelected: resolveHuntSkills(
-          resolveBattlePreset(
-            getHuntBattleSettings(session.settings, huntId).battlePreset,
-            session.services.getBattlePreset()
-          )
+        skillsSelected: resolveStartHuntSkills(
+          session.settings.autoApplyPresets,
+          getHuntBattleSettings(session.settings, huntId).battlePreset,
+          session.services.getBattlePreset()
         ),
       },
       {
@@ -592,6 +657,15 @@ export class HuntService extends Service {
         }
       }
 
+      const blessReady = await this.ensureAllBlessingsForHunt(trace);
+      if (!blessReady.ok) {
+        trace.finish("failed", { error: blessReady.error });
+        return {
+          ok: false as const,
+          error: blessReady.error ?? "Need all 7 blessings before starting auto hunt.",
+        };
+      }
+
       const block = enableAutoHuntBlockReason({
         connected: this.ctx.session.connected,
         autoTaskerEnabled: session.settings.autoTaskerEnabled,
@@ -599,6 +673,7 @@ export class HuntService extends Service {
         hasCharacterId: !!this.sessionState.characterId,
         partySnapshotSynced: this.partyState.partySnapshotSynced,
         isLeader: isPartyLeader(this.identity()),
+        hasAllBlessings: this.playerHasAllBlessings(),
       });
 
       trace.guard("enable_block", block == null, block ?? undefined);
@@ -616,6 +691,12 @@ export class HuntService extends Service {
       if (block === "not_leader") {
         trace.finish("failed", { error: "Only the party leader can start a hunt." });
         return { ok: false as const, error: "Only the party leader can start a hunt." };
+      }
+      if (block === "missing_blessings") {
+        const owned = this.blessState.ownedCount ?? 0;
+        const error = `Need all 7 blessings before starting a hunt (have ${owned}/7).`;
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
       }
       if (block) {
         trace.finish("failed", { error: block });

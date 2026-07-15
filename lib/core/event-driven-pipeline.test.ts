@@ -56,6 +56,12 @@ function leaderSession(
     },
     quests: { activeMonsterTasks: [] },
     market: { ...defaultSessionView().market, lastQuestSnapshotAt: Date.now() },
+    bless: {
+      ...defaultSessionView().bless,
+      blessSnapshotSynced: true,
+      ownedCount: 7,
+      lastSnapshotAt: Date.now(),
+    },
   });
   return session;
 }

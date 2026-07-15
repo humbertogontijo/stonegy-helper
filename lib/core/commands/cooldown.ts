@@ -32,6 +32,7 @@ export const FEATURE_COOLDOWNS = {
   "tools.autoTraining": REGULAR_COOLDOWN,
   "tools.readyCheck": SHORT_COOLDOWN,
   "tools.acceptPartyInvite": SHORT_COOLDOWN,
+  "tools.autoBuyBless": SHORT_COOLDOWN,
 } as const satisfies Record<SubFeatureId, number>;
 
 /**
@@ -81,6 +82,8 @@ export const COMMAND_COOLDOWNS: Readonly<Record<string, number>> = {
   // Tools
   party_ready_check_confirm: FEATURE_COOLDOWNS["tools.readyCheck"],
   party_accept_invite: FEATURE_COOLDOWNS["tools.acceptPartyInvite"],
+  bless_buy: FEATURE_COOLDOWNS["tools.autoBuyBless"],
+  bless_get_snapshot: FEATURE_COOLDOWNS["tools.autoBuyBless"],
   start_training: FEATURE_COOLDOWNS["tools.autoTraining"],
   finish_training: SHORT_COOLDOWN,
   training_presence_subscribe: BURST_COOLDOWN,

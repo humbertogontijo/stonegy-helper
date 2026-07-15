@@ -9,6 +9,15 @@ export const toolsReadyCheckSubFeature: SubFeature = {
   },
 };
 
+export const toolsAutoBuyBlessSubFeature: SubFeature = {
+  id: "tools.autoBuyBless",
+  featureId: "tools",
+  label: "Auto buy bless",
+  isEnabled(session) {
+    return session.settings.autoBuyBless;
+  },
+};
+
 export const toolsAcceptPartyInviteSubFeature: SubFeature = {
   id: "tools.acceptPartyInvite",
   featureId: "tools",
@@ -34,6 +43,7 @@ export const toolsFeature: Feature = {
   dependsOn: [],
   subFeatures: [
     toolsReadyCheckSubFeature,
+    toolsAutoBuyBlessSubFeature,
     toolsAcceptPartyInviteSubFeature,
     toolsAutoTrainingSubFeature,
   ],

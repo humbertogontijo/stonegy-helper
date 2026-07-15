@@ -22,6 +22,7 @@ import type { TrainingState } from "./states/training.state";
 import type { InventoryState } from "./states/inventory.state";
 import type { MarketState } from "./states/market.state";
 import type { TasksState } from "./states/tasks.state";
+import type { BlessState } from "./states/bless.state";
 import type { BattleService } from "./battle.service";
 import type { LootService } from "./loot.service";
 import type { MarketService } from "./market.service";
@@ -130,6 +131,10 @@ export class ServiceRegistry {
     return this.getDomain<TasksState>("tasksState");
   }
 
+  get blessState(): BlessState {
+    return this.getDomain<BlessState>("blessState");
+  }
+
   tryGetDomain<T extends DomainState>(id: DomainStateId): T | undefined {
     return this.domains.get(id) as T | undefined;
   }
@@ -224,8 +229,16 @@ export class ServiceRegistry {
     playerState: SessionView["playerState"],
     playerStateDetail = ""
   ): void {
+    const previous = this.playerState;
     this.playerState = playerState;
     this.playerStateDetail = playerStateDetail;
+    if (previous !== playerState) {
+      this.emit({
+        kind: "player_state_changed",
+        previous,
+        playerState,
+      });
+    }
   }
 
   getPlayerState(): {
@@ -249,6 +262,7 @@ export class ServiceRegistry {
     const inventory = this.tryGetDomain<InventoryState>("inventoryState");
     const market = this.tryGetDomain<MarketState>("marketState");
     const tasks = this.tryGetDomain<TasksState>("tasksState");
+    const bless = this.tryGetDomain<BlessState>("blessState");
 
     const huntGame = hunt?.projection() ?? {
       activeHuntId: null,
@@ -310,6 +324,15 @@ export class ServiceRegistry {
         lastQuestSnapshotAt: tasks?.lastQuestSnapshotAt ?? null,
       },
       quests: tasks?.projection() ?? { activeMonsterTasks: [] },
+      bless: bless?.projection() ?? {
+        blessSnapshotSynced: false,
+        ownedCount: null,
+        skillLossReductionPercent: null,
+        itemLossPercent: null,
+        hasAolEquipped: null,
+        blessings: [],
+        lastSnapshotAt: null,
+      },
       playerState: this.playerState,
       playerStateDetail: this.playerStateDetail,
       battlePreset: this.battlePreset,
@@ -322,49 +345,60 @@ export class ServiceRegistry {
     return view;
   }
 
-  /** Sync activity playerState from domain hunt/training when not in loot flows. */
+  /** Sync activity playerState from domain hunt/training when not in bot busy flows. */
   syncActivityPlayerState(): void {
     if (
       this.playerState === "selling_loot" ||
-      this.playerState === "splitting_loot"
+      this.playerState === "splitting_loot" ||
+      this.playerState === "buying_bless"
     ) {
       return;
     }
     const hunt = this.tryGetDomain<HuntState>("huntState");
     const training = this.tryGetDomain<TrainingState>("trainingState");
     if (hunt?.activeHuntId != null) {
-      this.playerState = "hunting";
-      this.playerStateDetail = "";
+      this.setPlayerState("hunting", "");
       return;
     }
     if (training?.activeTrainingId != null) {
-      this.playerState = "training";
-      this.playerStateDetail = "";
+      this.setPlayerState("training", "");
       return;
     }
-    this.playerState = "idling";
-    this.playerStateDetail = "";
+    this.setPlayerState("idling", "");
   }
+
+  private pumpTail: Promise<void> = Promise.resolve();
 
   /** Queue a synthetic event to run after the current dispatch completes.
    *  If no dispatch is in progress, starts one. */
   emit(event: GameEvent): void {
     this.emitQueue.push(event);
     if (!this.draining) {
-      void this.pump();
+      this.pumpTail = this.pump();
     }
   }
 
   async dispatch(event: GameEvent): Promise<void> {
     this.emitQueue.push(event);
-    await this.pump();
+    this.pumpTail = this.pump();
+    await this.pumpTail;
+  }
+
+  /** Await in-flight emit/dispatch pumps (tests / drainMessages). */
+  async drain(): Promise<void> {
+    await this.pumpTail;
+    // Nested emits during the last pump may have started a new tail.
+    while (this.draining || this.emitQueue.length > 0) {
+      await this.pumpTail;
+    }
   }
 
   /** Replace domain/core scoped state from a full projection (test / view setter). */
   seedFromProjection(projection: SessionView): void {
-    this.setPlayerState(projection.playerState, projection.playerStateDetail);
     this.setBattlePreset(projection.battlePreset);
 
+    // Apply domains before playerState so syncActivityPlayerState on the emitted
+    // player_state_changed event sees the new hunt/training ids.
     this.tryGetDomain<SessionState>("sessionState")?.applyCharacterPatch(projection.character);
     this.tryGetDomain<PartyState>("partyState")?.applyPartyPatch(projection.party);
     this.tryGetDomain<HuntState>("huntState")?.applyHuntPatch(projection.hunt);
@@ -375,6 +409,7 @@ export class ServiceRegistry {
     this.tryGetDomain<TasksState>("tasksState")?.applyLastQuestSnapshotAt(
       projection.market.lastQuestSnapshotAt
     );
+    this.tryGetDomain<BlessState>("blessState")?.applyBlessPatch(projection.bless);
 
     this.tryGet<BattleService>("battle")?.applyLastBootstrapHuntId(
       projection.hunt.lastBootstrapHuntId
@@ -391,6 +426,8 @@ export class ServiceRegistry {
       marketFullScanCheckpointOrderId: projection.market.marketFullScanCheckpointOrderId,
       recentMarketListings: projection.market.recentMarketListings,
     });
+
+    this.setPlayerState(projection.playerState, projection.playerStateDetail);
   }
 
   /** Apply domain states only (for wire path before CommandBus). */

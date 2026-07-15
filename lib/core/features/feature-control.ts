@@ -37,6 +37,7 @@ export function getFeatureMasterOffPatch(featureId: FeatureId): SettingsPatch {
     case "tools":
       return {
         autoConfirmReadyCheck: false,
+        autoBuyBless: false,
         autoAcceptPartyInvite: false,
         autoTrainingEnabled: false,
       };

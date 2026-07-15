@@ -68,6 +68,7 @@ export type PlayerState =
   | "hunting"
   | "selling_loot"
   | "splitting_loot"
+  | "buying_bless"
   | "training";
 
 export interface MonsterTaskQuestSummary {
@@ -133,6 +134,7 @@ export type {
   InventoryProjection,
   MarketProjection,
   QuestProjection,
+  BlessProjection,
 } from "./core/projections/types";
 
 import type {
@@ -144,6 +146,7 @@ import type {
   InventoryProjection,
   MarketProjection,
   QuestProjection,
+  BlessProjection,
 } from "./core/projections/types";
 import type { DebugTelemetrySnapshot } from "./core/events/debug-telemetry";
 import type { Settings } from "./core/settings";
@@ -160,6 +163,7 @@ export interface BotState {
   inventory: InventoryProjection;
   market: MarketProjection;
   quests: QuestProjection;
+  bless: BlessProjection;
   playerState: PlayerState;
   playerStateDetail: string;
   /** Resolved preset for the selected hunt (configured settings, else live game). */

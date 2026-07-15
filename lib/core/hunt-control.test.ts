@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createBattlePreset } from "../presets";
 import { GameSession } from "./session";
 import { defaultSettings } from "./settings";
 import { defaultSessionView } from "./projections/defaults";
@@ -10,6 +11,7 @@ import { TasksService } from "./services/tasks.service";
 
 vi.mock("./readiness", () => ({
   waitForPartySnapshot: vi.fn().mockResolvedValue(undefined),
+  waitForBlessSnapshot: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { waitForPartySnapshot } from "./readiness";
@@ -33,6 +35,15 @@ function connectedSession(): GameSession {
       partyStatus: "idle",
       partyLeaderId: "hero-1",
       partyMemberCount: null,
+    },
+    bless: {
+      blessSnapshotSynced: true,
+      ownedCount: 7,
+      skillLossReductionPercent: 56,
+      itemLossPercent: 0,
+      hasAolEquipped: false,
+      blessings: [],
+      lastSnapshotAt: Date.now(),
     },
   });
   session.settings = { ...session.settings, selectedHuntId: 1 };
@@ -62,6 +73,72 @@ describe("hunt-control", () => {
     expect(result.state).toBeDefined();
     // Flow-trace must not embed botState (creates a JSON cycle on Safari).
     expect(() => JSON.stringify(session.botState)).not.toThrow();
+  });
+
+  it("START_HUNT uses event skills when auto-apply presets is off", async () => {
+    const session = connectedSession();
+    session.settings = {
+      ...session.settings,
+      autoApplyPresets: false,
+      huntBattleByHuntId: {
+        1: {
+          partyPositionX: null,
+          partyPositionY: null,
+          selectedLureId: null,
+          battlePreset: createBattlePreset({
+            selectedSkills: ["Configured A", "Configured B", null, null],
+          }),
+        },
+      },
+    };
+    session.services.setBattlePreset(
+      createBattlePreset({ selectedSkills: ["Last Used", null, null, null] })
+    );
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    await session.services.get<HuntService>("hunt").startHunt(1, { force: true });
+
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      {
+        huntId: 1,
+        skillsSelected: ["Last Used", null, null, null],
+      },
+      expect.anything()
+    );
+  });
+
+  it("START_HUNT uses configured preset skills when auto-apply presets is on", async () => {
+    const session = connectedSession();
+    session.settings = {
+      ...session.settings,
+      autoApplyPresets: true,
+      huntBattleByHuntId: {
+        1: {
+          partyPositionX: null,
+          partyPositionY: null,
+          selectedLureId: null,
+          battlePreset: createBattlePreset({
+            selectedSkills: ["Configured A", "Configured B", null, null],
+          }),
+        },
+      },
+    };
+    session.services.setBattlePreset(
+      createBattlePreset({ selectedSkills: ["Last Used", null, null, null] })
+    );
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    await session.services.get<HuntService>("hunt").startHunt(1, { force: true });
+
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      {
+        huntId: 1,
+        skillsSelected: ["Configured A", "Configured B", null, null],
+      },
+      expect.anything()
+    );
   });
 
   it("rejects auto hunt when not party leader", async () => {

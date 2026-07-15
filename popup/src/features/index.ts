@@ -171,6 +171,12 @@ export function getFeatureStatus(featureId: FeatureId, state: BotState | null): 
       if (state.settings.autoConfirmReadyCheck) {
         parts.push("Auto confirm ready");
       }
+      if (state.settings.autoBuyBless) {
+        const owned = state.bless?.ownedCount;
+        parts.push(
+          owned != null ? `Auto buy bless (${owned}/7)` : "Auto buy bless"
+        );
+      }
       if (state.settings.autoAcceptPartyInvite) {
         parts.push(
           state.settings.partyInviteAcceptMode === "allowlist"

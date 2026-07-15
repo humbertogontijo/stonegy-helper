@@ -520,6 +520,13 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
       spellMins={spellMins}
       showAmmo={showAmmo}
       disabled={subsDisabled}
+      action={
+        <RefreshIconButton
+          label="Load presets from game"
+          disabled={!state?.connection.connected || huntIdNum == null}
+          onClick={loadPresetsFromGame}
+        />
+      }
       updatePreset={updatePreset}
       updateSkill={updateSkill}
       updateSpellMin={updateSpellMin}
@@ -625,13 +632,6 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
               void savePreset({ autoApplyPresets: checked });
             },
           },
-          leadingAction: (
-            <RefreshIconButton
-              label="Load presets from game"
-              disabled={!state?.connection.connected || huntIdNum == null}
-              onClick={loadPresetsFromGame}
-            />
-          ),
           action: {
             label: "Apply now",
             onClick: () =>

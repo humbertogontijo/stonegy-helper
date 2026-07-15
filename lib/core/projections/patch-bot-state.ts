@@ -18,6 +18,13 @@ export function patchBotState(state: BotState, patch: BotStatePatch): BotState {
     inventory: patch.inventory ? { ...state.inventory, ...patch.inventory } : state.inventory,
     market: patch.market ? { ...state.market, ...patch.market } : state.market,
     quests: patch.quests ? { ...state.quests, ...patch.quests } : state.quests,
+    bless: patch.bless
+      ? {
+          ...state.bless,
+          ...patch.bless,
+          blessings: patch.bless.blessings ?? state.bless.blessings,
+        }
+      : state.bless,
     settings: patch.settings ? { ...state.settings, ...patch.settings } : state.settings,
     battlePreset: patch.battlePreset
       ? { ...state.battlePreset, ...patch.battlePreset }

@@ -6,6 +6,7 @@ import type { TrainingState } from "./states/training.state";
 import type { InventoryState } from "./states/inventory.state";
 import type { MarketState } from "./states/market.state";
 import type { TasksState } from "./states/tasks.state";
+import type { BlessState } from "./states/bless.state";
 import type { MarketService } from "./market.service";
 import type { BattleService } from "./battle.service";
 import type { LootService } from "./loot.service";
@@ -76,6 +77,11 @@ export function applyViewPatchToServices(
   }
   if (tasks && patch.market?.lastQuestSnapshotAt !== undefined) {
     tasks.applyLastQuestSnapshotAt(patch.market.lastQuestSnapshotAt);
+  }
+
+  const bless = registry.tryGetDomain<BlessState>("blessState");
+  if (bless && patch.bless) {
+    bless.applyBlessPatch(patch.bless);
   }
 
   const marketSvc = registry.tryGet<MarketService>("market");

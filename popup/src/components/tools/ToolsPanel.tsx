@@ -36,6 +36,10 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
     state?.settings.autoConfirmReadyCheck,
     false
   );
+  const [autoBuyBless, setAutoBuyBless] = usePersistedField(
+    state?.settings.autoBuyBless,
+    false
+  );
   const [autoAcceptPartyInvite, setAutoAcceptPartyInvite] = usePersistedField(
     state?.settings.autoAcceptPartyInvite,
     false
@@ -75,6 +79,7 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
   const saveTools = (overrides?: Record<string, unknown>) =>
     saveSettings({
       autoConfirmReadyCheck,
+      autoBuyBless,
       autoAcceptPartyInvite,
       partyInviteAcceptMode,
       partyInviteAllowlistNames: parsePartyInviteAllowlist(partyInviteAllowlistText),
@@ -92,6 +97,9 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
     onLocalStateReset: (updates) => {
       if (updates.autoConfirmReadyCheck === false) {
         setAutoConfirmReadyCheck(false);
+      }
+      if (updates.autoBuyBless === false) {
+        setAutoBuyBless(false);
       }
       if (updates.autoAcceptPartyInvite === false) {
         setAutoAcceptPartyInvite(false);
@@ -169,6 +177,17 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
               const checked = event.target.checked;
               setAutoConfirmReadyCheck(checked);
               void saveTools({ autoConfirmReadyCheck: checked });
+            }}
+          />
+          <StonegyToggle
+            id="auto-buy-bless"
+            label="Auto buy bless"
+            checked={autoBuyBless}
+            disabled={!masterOn}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setAutoBuyBless(checked);
+              void saveTools({ autoBuyBless: checked });
             }}
           />
         </FeatureInputs>

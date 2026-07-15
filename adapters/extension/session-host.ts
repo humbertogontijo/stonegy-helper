@@ -809,6 +809,10 @@ export class ExtensionSessionHost {
         message.autoConfirmReadyCheck === undefined
           ? state.settings.autoConfirmReadyCheck
           : !!message.autoConfirmReadyCheck,
+      autoBuyBless:
+        message.autoBuyBless === undefined
+          ? state.settings.autoBuyBless
+          : !!message.autoBuyBless,
       autoAcceptPartyInvite:
         message.autoAcceptPartyInvite === undefined
           ? state.settings.autoAcceptPartyInvite

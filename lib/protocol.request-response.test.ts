@@ -196,7 +196,19 @@ describe("matchResponse", () => {
           data: {
             page: 1,
             filters: { itemId: 82 },
-            sellOrders: [{ itemId: 82 }],
+            sellOrders: [
+              {
+                id: "order-82",
+                itemId: 82,
+                tier: 0,
+                isOwnOrder: false,
+                isBuyOrder: false,
+                eachPrice: 100,
+                itemAmount: 1,
+                totalPrice: 100,
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
           },
         }
       )

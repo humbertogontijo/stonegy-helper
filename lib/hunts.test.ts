@@ -86,7 +86,6 @@ describe("resolveSelectorHuntIdFromBootstrap", () => {
     expect(
       resolveSelectorHuntIdFromBootstrap({
         id: 43,
-        title: "Boss - The Count of the Core",
         mode: "boss",
         bossFight: { bossId: 43 },
       })

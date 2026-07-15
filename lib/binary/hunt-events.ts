@@ -1,5 +1,4 @@
 import { BinaryReader } from "./reader.ts";
-import { decodeInventoryItemEntry } from "./inventory-snapshot.ts";
 import type {
   AnalyzerStatsBody,
   CombatDamageBody,
@@ -9,8 +8,8 @@ import type {
   EntityUpdateBody,
   EntityUuidListBody,
   GroundItemUpdateBody,
-  GroundLootBody,
-  GroundLootDropEntry,
+  MonsterLootBody,
+  MonsterLootDropEntry,
   GoldBalanceBody,
   HuntAnalyzerLootItem,
   HuntAnalyzerMonsterEntry,
@@ -26,33 +25,6 @@ import type {
   VitalDeltaBody,
   XpGainBody,
 } from "../protocol-messages.ts";
-
-export type {
-  AnalyzerStatsBody,
-  CombatDamageBody,
-  CounterTripletBody,
-  DecodedHuntFrameBody,
-  EntityRef,
-  EntityUpdateBody,
-  EntityUuidListBody,
-  GroundItemUpdateBody,
-  GroundLootBody,
-  GroundLootDropEntry,
-  GoldBalanceBody,
-  HuntAnalyzerLootItem,
-  HuntAnalyzerMonsterEntry,
-  HuntAnalyzerPartyMember,
-  HuntAnalyzerSnapshotBody,
-  HuntEntitySpawnBody,
-  HuntEntitySpawnEntry,
-  ItemGrantBody,
-  KillEventBody,
-  PlayerVitalsBody,
-  SessionMetricBody,
-  StatusEffectBody,
-  VitalDeltaBody,
-  XpGainBody,
-};
 
 const ENTITY_UUID_STRING_LENGTH = 36;
 const ENTITY_UUID_PATTERN =
@@ -78,51 +50,66 @@ function readEntityUuid(reader: BinaryReader): string {
   return uuid;
 }
 
-function decodeGroundLoot(reader: BinaryReader, totalLootValue: number): GroundLootBody {
+/**
+ * Shared per-item trailer after groundUuid: itemId/amount + charge flags.
+ * Same layout as inventory snapshot flagsA (high word = remainingUnits) + flagsB.
+ */
+function readLootItemFields(reader: BinaryReader): Omit<MonsterLootDropEntry, "groundUuid"> {
+  const itemId = reader.u32();
+  const amount = reader.u32();
+  const flagsA = reader.u32();
+  const flagsB = reader.u16();
+  return {
+    itemId,
+    amount,
+    flagsA,
+    flagsB,
+    remainingUnits: (flagsA >>> 16) & 0xffff,
+  };
+}
+
+function decodeMonsterLoot(reader: BinaryReader, totalLootValue: number): MonsterLootBody {
   reader.u32();
   const dropCount = reader.u16();
   if (dropCount <= 0 || dropCount > HUNT_FRAME_MAX_DROP_COUNT) {
-    throw new RangeError(`Invalid ground loot drop count: ${dropCount}`);
+    throw new RangeError(`Invalid monster loot drop count: ${dropCount}`);
   }
 
-  const drops: GroundLootDropEntry[] = [];
+  const drops: MonsterLootDropEntry[] = [];
 
   for (let index = 0; index < dropCount; index += 1) {
-    if (index > 0) {
-      reader.u32();
-      reader.u16();
-    }
-
     const groundUuid = readEntityUuid(reader);
-    const itemId = reader.u32();
-    const amount = reader.u32();
-    drops.push({ groundUuid, itemId, amount });
+    drops.push({
+      groundUuid,
+      ...readLootItemFields(reader),
+    });
   }
 
-  if (reader.remaining === 8) {
-    reader.u64();
+  // Captures end with a 2-byte zero pad after the last drop trailer.
+  if (reader.remaining > 0) {
+    reader.rest();
   }
 
   return { subType: 1, totalLootValue, dropCount, drops };
 }
 
 function decodeItemGrant(reader: BinaryReader): ItemGrantBody {
+  // Same item fields as a single monster_loot drop; uuid length lives in frame
+  // fieldB instead of a per-entry u16 prefix.
   const groundUuid = new TextDecoder().decode(reader.bytes(ENTITY_UUID_STRING_LENGTH));
   if (!isEntityUuidString(groundUuid)) {
     throw new RangeError(`Invalid item grant uuid: ${groundUuid}`);
   }
 
-  const itemId = reader.u32();
-  const amount = reader.u32();
-  if (reader.remaining === 8) {
-    reader.u64();
+  const fields = readLootItemFields(reader);
+  if (reader.remaining > 0) {
+    reader.rest();
   }
 
   return {
     subType: 0,
     groundUuid,
-    itemId,
-    amount,
+    ...fields,
   };
 }
 
@@ -139,9 +126,9 @@ function decodeEntityUuidList(reader: BinaryReader, entityCount: number): Entity
 /**
  * Hunt frame (0x0a) layout: u8 subType, u16 fieldA, u16 fieldB, then variant body.
  * Variants branch only on (subType, fieldA):
- *   (1, *)           → ground loot (fieldA = total loot value)
+ *   (1, *)           → monster loot (fieldA = total loot value)
  *   (0, 0)           → entity uuid list (fieldB = entity count)
- *   (0, 1)           → item grant (fieldB = uuid length prefix, always 36)
+ *   (0, 1)           → item grant (fieldB = uuid length, always 36; body matches one loot drop)
  */
 export function decodeHuntFrame(reader: BinaryReader): DecodedHuntFrameBody {
   const subType = reader.u8();
@@ -150,8 +137,8 @@ export function decodeHuntFrame(reader: BinaryReader): DecodedHuntFrameBody {
 
   if (subType === 1) {
     return {
-      kind: "ground_loot",
-      data: decodeGroundLoot(reader, fieldA),
+      kind: "monster_loot",
+      data: decodeMonsterLoot(reader, fieldA),
     };
   }
 
@@ -774,27 +761,148 @@ export function decodeStatusEffect(reader: BinaryReader): StatusEffectBody {
 }
 
 export function decodeGroundItemUpdate(reader: BinaryReader): GroundItemUpdateBody {
-  const entityRef = {
-    bytes: reader.bytes(8),
-    hex: "",
-  };
-  entityRef.hex = [...entityRef.bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  const subType = reader.u8();
-  const count = reader.u8();
+  const entityRef = readEntityRef(reader);
 
-  let item: GroundItemUpdateBody["item"];
-  if (count > 0 && reader.remaining >= 23) {
-    reader.bytes(11);
-    readEntityRef(reader);
-    reader.u32();
-  } else if (count > 0 && reader.remaining >= 30) {
-    item = decodeInventoryItemEntry(reader) as GroundItemUpdateBody["item"];
+  // Long form embeds backpack slot updates: header (9 bytes + u8 count) + count×27-byte
+  // items, then an optional tile trailer. Short tile updates are exactly 25 bytes after
+  // the leading entityRef (subType, count, 11 appearance bytes, related entity, u32).
+  if (reader.remaining > GROUND_ITEM_SHORT_BODY_SIZE) {
+    const mark = reader.position;
+    const headerFields = reader.bytes(GROUND_ITEM_LONG_HEADER_SIZE);
+    const itemCount = reader.u8();
+    const itemsStart = reader.position;
+    const itemsBytes = itemCount * GROUND_ITEM_INVENTORY_ENTRY_SIZE;
+    if (
+      itemCount > 0 &&
+      itemCount <= 64 &&
+      reader.remaining >= itemsBytes &&
+      isUuidV7At(reader.bufferView, itemsStart)
+    ) {
+      const items: GroundItemInventoryEntry[] = [];
+      for (let index = 0; index < itemCount; index += 1) {
+        items.push(decodeGroundItemInventoryEntry(reader));
+      }
+      const trailer = decodeGroundItemInventoryTrailer(reader);
+      return {
+        entityRef,
+        subType: trailer.subType ?? 0,
+        count: itemCount,
+        header: Array.from(headerFields),
+        items,
+        appearance: trailer.appearance,
+        relatedEntityRef: trailer.relatedEntityRef,
+        extra: trailer.extra,
+        item: items[0],
+      };
+    }
+    reader.seek(mark);
+  }
+
+  const tile = decodeGroundItemTileTail(reader);
+  if (!tile) {
+    throw new RangeError(
+      `Ground item update too short: remaining=${reader.remaining} after entityRef`
+    );
   }
 
   return {
     entityRef,
-    subType,
-    count,
-    item,
+    subType: tile.subType,
+    count: tile.count,
+    appearance: tile.appearance,
+    relatedEntityRef: tile.relatedEntityRef,
+    extra: tile.extra,
   };
 }
+
+const GROUND_ITEM_SHORT_BODY_SIZE = 25;
+const GROUND_ITEM_LONG_HEADER_SIZE = 9;
+const GROUND_ITEM_INVENTORY_ENTRY_SIZE = 27;
+const GROUND_ITEM_APPEARANCE_SIZE = 11;
+
+function isUuidV7At(buffer: Uint8Array, offset: number): boolean {
+  if (offset + 16 > buffer.length) {
+    return false;
+  }
+  const version = (buffer[offset + 6] >> 4) & 0xf;
+  return version === 7;
+}
+
+function decodeGroundItemInventoryEntry(reader: BinaryReader): GroundItemInventoryEntry {
+  const uuid = reader.uuid();
+  const itemId = reader.u16();
+  // Live captures: uuid(16) + itemId(u16) + unk(u16) + unk(u8) + amount(u8) + flags(u32) + pad(u8).
+  // Treating the middle dword as amount previously pulled flag bytes (and produced values like 256/512).
+  const metaLow = reader.u16();
+  const metaHigh = reader.u8();
+  const amount = reader.u8();
+  const flags = reader.u32();
+  const suffix = reader.u8();
+  const meta = (metaHigh << 16) | metaLow;
+  return {
+    uuid,
+    itemId,
+    amount,
+    flagsA: 2,
+    flagsB: 0,
+    remainingUnits: 0,
+    meta,
+    flags,
+    suffix,
+  };
+}
+
+function decodeGroundItemTileTail(reader: BinaryReader): {
+  subType: number;
+  count: number;
+  appearance: number[];
+  relatedEntityRef: ReturnType<typeof readEntityRef>;
+  extra: number;
+} | null {
+  if (reader.remaining < GROUND_ITEM_SHORT_BODY_SIZE) {
+    return null;
+  }
+
+  const subType = reader.u8();
+  const count = reader.u8();
+  const appearance = Array.from(reader.bytes(GROUND_ITEM_APPEARANCE_SIZE));
+  const relatedEntityRef = readEntityRef(reader);
+  const extra = reader.u32();
+  return { subType, count, appearance, relatedEntityRef, extra };
+}
+
+/** After inventory slots, tail often ends with related entity + u32 (same as short form). */
+function decodeGroundItemInventoryTrailer(reader: BinaryReader): {
+  subType?: number;
+  appearance?: number[];
+  relatedEntityRef?: ReturnType<typeof readEntityRef>;
+  extra?: number;
+} {
+  if (reader.remaining === 0) {
+    return {};
+  }
+
+  if (reader.remaining >= 12) {
+    const prefixLen = reader.remaining - 12;
+    const appearance =
+      prefixLen > 0 ? Array.from(reader.bytes(prefixLen)) : undefined;
+    const relatedEntityRef = readEntityRef(reader);
+    const extra = reader.u32();
+    return { appearance, relatedEntityRef, extra };
+  }
+
+  reader.rest();
+  return {};
+}
+
+export type GroundItemInventoryEntry = {
+  uuid: string;
+  itemId: number;
+  amount: number;
+  flagsA: number;
+  flagsB: number;
+  remainingUnits: number;
+  meta: number;
+  flags: number;
+  suffix: number;
+};

@@ -1,4 +1,6 @@
-import type { ItemMarketPrice, MarketPricesCache, MarketSnapshotData } from "./types";
+import type { ItemMarketPrice } from "../types";
+import type { MarketPricesCache } from "./types";
+import type { MarketSnapshotData } from "../protocol-messages";
 import { MARKET_PRICES_STORAGE_KEY } from "./constants";
 import {
   isItemFilteredMarketSnapshot,
@@ -223,5 +225,3 @@ export function isMarketPriceFresh(
 
   return now - entry.updatedAt <= ttlMs;
 }
-
-export type { MarketSnapshotData };

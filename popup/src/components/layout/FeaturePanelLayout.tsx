@@ -72,6 +72,7 @@ export function FeaturePanelLayout({
             ? () => showFeedback(active.lockedMessage ?? "This sub-feature is locked.", "error")
             : undefined
         }
+        leadingAction={active?.leadingAction}
         action={active?.action}
       />
       <FeatureHubNavigator

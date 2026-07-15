@@ -1,6 +1,4 @@
 import type { GameSession } from "../session";
-
-export type { FeatureId, SubFeatureId } from "../services/types";
 import type { FeatureId, SubFeatureId } from "../services/types";
 
 export interface SubFeature {

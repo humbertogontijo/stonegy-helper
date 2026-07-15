@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import {
   isAnyFeatureMasterOn,
   readAllFeatureMasters,

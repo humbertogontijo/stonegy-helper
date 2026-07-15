@@ -36,6 +36,7 @@ export function toBotState(
     playerState: view.playerState,
     playerStateDetail: view.playerStateDetail,
     battlePreset: resolveBattlePreset(configured, view.battlePreset),
+    characterBattlePreset: view.battlePreset,
     settings,
     logs: telemetry.logs,
     // Heal cyclic flow-trace results so Safari/Chrome message passing can serialize.

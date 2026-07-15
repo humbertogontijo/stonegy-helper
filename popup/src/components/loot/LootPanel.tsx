@@ -3,7 +3,7 @@ import {
   DEFAULT_MARKET_TAX_PERCENT,
   DEFAULT_MARKET_UNDERCUT_GOLD,
 } from "../../../../lib/market/constants";
-import { getItemName, getItemRarityBorderTier, listItems, RARITY_BORDER_TIERS, normalizeRarityBorderTier } from "../../../../lib/items";
+import { getItemName, getItemRarityBorderTier, listItems, RARITY_BORDER_TIERS, normalizeRarityBorderTier, shouldNeverAutoSell } from "../../../../lib/items";
 import type { InventoryLootSellEntry } from "../../../../lib/domain/loot-sell";
 import {
   getInventoryLootSellEntries,
@@ -12,12 +12,11 @@ import {
 import type { LootSellMode } from "../../../../lib/types";
 import type { PartyLootSplitHistoryEntry } from "../../../../lib/core/projections/types";
 import { sendBot } from "../../api/bot";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";
 import { FeatureInputs } from "../ui/FeatureInputs";
 import { SubFeatureSection } from "../ui/SubFeatureSection";
-import { StonegyToggle } from "../ui/StonegyToggle";
 import type { SubFeatureBadge } from "../ui/FeatureHubNavigator";
 import { SplitSubFeatureDetail } from "../ui/FeatureHubNavigator";
 import { RefreshIconButton } from "../ui/RefreshIconButton";
@@ -34,9 +33,9 @@ interface LootPanelProps {
 }
 
 const OVERRIDE_MODE_OPTIONS: Array<{ value: LootSellMode; label: string }> = [
-  { value: "market", label: "Market" },
-  { value: "npc", label: "NPC" },
   { value: "keep", label: "Keep" },
+  { value: "npc", label: "NPC" },
+  { value: "market", label: "Market" },
 ];
 
 const MIN_RARITY_OPTIONS = RARITY_BORDER_TIERS.map((entry) => ({
@@ -81,61 +80,105 @@ function formatCompactGold(value: number | null | undefined): string {
   return value.toLocaleString();
 }
 
+const CATEGORY_SELL_OPTIONS: Array<{
+  key: "mountSellMode" | "imbuementSellMode" | "craftSellMode" | "enchantSellMode";
+  label: string;
+}> = [
+  { key: "mountSellMode", label: "Mount items" },
+  { key: "imbuementSellMode", label: "Imbuement items" },
+  { key: "craftSellMode", label: "Craft items" },
+  { key: "enchantSellMode", label: "Enchant items" },
+];
+
 function SellOnMarketSection({
   minRarityTier,
-  sellMountItems,
+  minRaritySellMode,
+  categoryModes,
   disabled,
   onMinRarityChange,
-  onSellMountsChange,
+  onMinRarityModeChange,
+  onCategoryModeChange,
 }: {
   minRarityTier: string;
-  sellMountItems: boolean;
+  minRaritySellMode: LootSellMode;
+  categoryModes: {
+    mountSellMode: LootSellMode;
+    imbuementSellMode: LootSellMode;
+    craftSellMode: LootSellMode;
+    enchantSellMode: LootSellMode;
+  };
   disabled?: boolean;
   onMinRarityChange: (tier: string) => void;
-  onSellMountsChange: (checked: boolean) => void;
+  onMinRarityModeChange: (mode: LootSellMode) => void;
+  onCategoryModeChange: (
+    key: "mountSellMode" | "imbuementSellMode" | "craftSellMode" | "enchantSellMode",
+    mode: LootSellMode
+  ) => void;
 }) {
   const selectedTier = normalizeRarityBorderTier(Number(minRarityTier));
 
   return (
-    <fieldset className="m-0 rounded border border-[var(--border-gold-soft)] px-1.5 pb-1.5 pt-0">
-      <legend className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-        Sell on market
-      </legend>
-      <div className="flex flex-col gap-1">
-        <label className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-            Min rarity
+    <div className="flex flex-col gap-1">
+      <label className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+          Min rarity
+        </span>
+        <select
+          className={`stonegy-select min-w-0 flex-1 py-0.5! px-1! text-[11px]! ${rarityTierClass(selectedTier) ?? ""}`}
+          style={{ color: rarityTierColor(selectedTier) }}
+          value={String(selectedTier)}
+          disabled={disabled}
+          onChange={(e) =>
+            onMinRarityChange(String(normalizeRarityBorderTier(Number(e.target.value))))
+          }
+        >
+          {MIN_RARITY_OPTIONS.map((option) => (
+            <option
+              key={option.value}
+              value={option.value}
+              style={{ color: rarityTierColor(Number(option.value)) }}
+            >
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="stonegy-select w-[4.75rem]! shrink-0 py-0.5! px-1! text-[11px]!"
+          value={minRaritySellMode}
+          disabled={disabled}
+          aria-label="Sell mode for min rarity items"
+          onChange={(e) => onMinRarityModeChange(e.target.value as LootSellMode)}
+        >
+          {OVERRIDE_MODE_OPTIONS.map((mode) => (
+            <option key={mode.value} value={mode.value}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {CATEGORY_SELL_OPTIONS.map((option) => (
+        <label key={option.key} className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+            {option.label}
           </span>
           <select
-            className={`stonegy-select min-w-0 flex-1 py-0.5! px-1! text-[11px]! ${rarityTierClass(selectedTier) ?? ""}`}
-            style={{ color: rarityTierColor(selectedTier) }}
-            value={String(selectedTier)}
+            className="stonegy-select w-[4.75rem]! shrink-0 py-0.5! px-1! text-[11px]!"
+            value={categoryModes[option.key]}
             disabled={disabled}
+            aria-label={`Sell mode for ${option.label}`}
             onChange={(e) =>
-              onMinRarityChange(String(normalizeRarityBorderTier(Number(e.target.value))))
+              onCategoryModeChange(option.key, e.target.value as LootSellMode)
             }
           >
-            {MIN_RARITY_OPTIONS.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-                style={{ color: rarityTierColor(Number(option.value)) }}
-              >
-                {option.label}
+            {OVERRIDE_MODE_OPTIONS.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
               </option>
             ))}
           </select>
         </label>
-        <StonegyToggle
-          id="market-sell-mounts"
-          label="Sell mounts"
-          className="gap-1.5! text-[11px]!"
-          checked={sellMountItems}
-          disabled={disabled}
-          onChange={(e) => onSellMountsChange(e.target.checked)}
-        />
-      </div>
-    </fieldset>
+      ))}
+    </div>
   );
 }
 
@@ -182,6 +225,7 @@ function SellOverridesDropdown({
       .filter(
         (item) =>
           !selected.has(item.id) &&
+          !shouldNeverAutoSell(item.id) &&
           (item.name.toLowerCase().includes(query) || String(item.id).includes(query))
       )
       .slice(0, 12);
@@ -207,7 +251,7 @@ function SellOverridesDropdown({
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-        Sell overrides
+        Item overrides
       </span>
       <div ref={rootRef} className="relative">
         <button
@@ -308,16 +352,20 @@ function AutoSellStatusPanel({
   runAction?: (action: () => Promise<{ ok?: boolean; error?: string; message?: string }>) => Promise<void>;
   previewSettings: {
     marketSellMinRarityTier: number;
-    marketSellMountItems: boolean;
+    minRaritySellMode: LootSellMode;
+    mountSellMode: LootSellMode;
+    imbuementSellMode: LootSellMode;
+    craftSellMode: LootSellMode;
+    enchantSellMode: LootSellMode;
     lootSellModeByItemId: Record<number, LootSellMode>;
   };
 }) {
   const pricing = useMemo(
     () => ({
-      taxPercent: DEFAULT_MARKET_TAX_PERCENT,
-      undercutGold: DEFAULT_MARKET_UNDERCUT_GOLD,
+      taxPercent: state?.settings.marketTaxPercent ?? DEFAULT_MARKET_TAX_PERCENT,
+      undercutGold: state?.settings.marketUndercutGold ?? DEFAULT_MARKET_UNDERCUT_GOLD,
     }),
-    []
+    [state?.settings.marketTaxPercent, state?.settings.marketUndercutGold]
   );
 
   const previewState = useMemo(() => {
@@ -329,7 +377,6 @@ function AutoSellStatusPanel({
       settings: {
         ...state.settings,
         ...previewSettings,
-        marketUndercutGold: DEFAULT_MARKET_UNDERCUT_GOLD,
       },
     };
   }, [state, previewSettings]);
@@ -638,9 +685,25 @@ export function LootPanel({ state, runAction, saveSettings, showFeedback }: Loot
       : undefined,
     "1"
   );
-  const [sellMountItems, setSellMountItems] = usePersistedField(
-    state?.settings.marketSellMountItems,
-    false
+  const [minRaritySellMode, setMinRaritySellMode] = usePersistedField(
+    state?.settings.minRaritySellMode,
+    "market" as LootSellMode
+  );
+  const [mountSellMode, setMountSellMode] = usePersistedField(
+    state?.settings.mountSellMode,
+    "keep" as LootSellMode
+  );
+  const [imbuementSellMode, setImbuementSellMode] = usePersistedField(
+    state?.settings.imbuementSellMode,
+    "keep" as LootSellMode
+  );
+  const [craftSellMode, setCraftSellMode] = usePersistedField(
+    state?.settings.craftSellMode,
+    "keep" as LootSellMode
+  );
+  const [enchantSellMode, setEnchantSellMode] = usePersistedField(
+    state?.settings.enchantSellMode,
+    "keep" as LootSellMode
   );
   const [sellModes, setSellModes] = usePersistedField(
     state?.settings.lootSellModeByItemId,
@@ -654,9 +717,12 @@ export function LootPanel({ state, runAction, saveSettings, showFeedback }: Loot
 
   const lootSettings = (overrides: Record<string, unknown> = {}) => ({
     autoSellLoot,
-    marketUndercutGold: DEFAULT_MARKET_UNDERCUT_GOLD,
     marketSellMinRarityTier: normalizeRarityBorderTier(Number(minRarityTier)),
-    marketSellMountItems: sellMountItems,
+    minRaritySellMode,
+    mountSellMode,
+    imbuementSellMode,
+    craftSellMode,
+    enchantSellMode,
     lootSellModeByItemId: sellModes,
     autoSplitLootOnHuntFinished,
     ...overrides,
@@ -683,6 +749,22 @@ export function LootPanel({ state, runAction, saveSettings, showFeedback }: Loot
     const next = { ...sellModes, [itemId]: mode };
     setSellModes(next);
     void saveLoot({ lootSellModeByItemId: next });
+  };
+
+  const setCategorySellMode = (
+    key: "mountSellMode" | "imbuementSellMode" | "craftSellMode" | "enchantSellMode",
+    mode: LootSellMode
+  ) => {
+    if (key === "mountSellMode") {
+      setMountSellMode(mode);
+    } else if (key === "imbuementSellMode") {
+      setImbuementSellMode(mode);
+    } else if (key === "craftSellMode") {
+      setCraftSellMode(mode);
+    } else {
+      setEnchantSellMode(mode);
+    }
+    void saveLoot({ [key]: mode });
   };
 
   const toggleOverrideItem = (itemId: number, selected: boolean) => {
@@ -754,15 +836,22 @@ export function LootPanel({ state, runAction, saveSettings, showFeedback }: Loot
                 <SubFeatureSection hideTitle compact lockAutomation={subsDisabled}>
                   <SellOnMarketSection
                     minRarityTier={minRarityTier}
-                    sellMountItems={sellMountItems}
+                    minRaritySellMode={minRaritySellMode}
+                    categoryModes={{
+                      mountSellMode,
+                      imbuementSellMode,
+                      craftSellMode,
+                      enchantSellMode,
+                    }}
                     onMinRarityChange={(next) => {
                       setMinRarityTier(next);
                       void saveLoot({ marketSellMinRarityTier: Number(next) });
                     }}
-                    onSellMountsChange={(checked) => {
-                      setSellMountItems(checked);
-                      void saveLoot({ marketSellMountItems: checked });
+                    onMinRarityModeChange={(mode) => {
+                      setMinRaritySellMode(mode);
+                      void saveLoot({ minRaritySellMode: mode });
                     }}
+                    onCategoryModeChange={setCategorySellMode}
                   />
                   <SellOverridesDropdown
                     sellModes={sellModes}
@@ -777,7 +866,11 @@ export function LootPanel({ state, runAction, saveSettings, showFeedback }: Loot
                   runAction={runAction}
                   previewSettings={{
                     marketSellMinRarityTier: normalizeRarityBorderTier(Number(minRarityTier)),
-                    marketSellMountItems: sellMountItems,
+                    minRaritySellMode,
+                    mountSellMode,
+                    imbuementSellMode,
+                    craftSellMode,
+                    enchantSellMode,
                     lootSellModeByItemId: sellModes,
                   }}
                 />

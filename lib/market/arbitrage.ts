@@ -1,5 +1,6 @@
 import { getNpcSellPrice } from "../items";
-import type { ArbitrageOpportunity, ItemMarketPrice } from "./types";
+import type { ItemMarketPrice } from "../types";
+import type { ArbitrageOpportunity } from "./types";
 
 export function findBuyMarketSellNpcOpportunities(
   itemIds: number[],

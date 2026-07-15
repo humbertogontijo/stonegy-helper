@@ -64,7 +64,10 @@ export const COMMAND_COOLDOWNS: Readonly<Record<string, number>> = {
   gold_transfer: FEATURE_COOLDOWNS["loot.lootSplit"],
   party_loot_splitter_reset: FEATURE_COOLDOWNS["loot.lootSplit"],
   // Battle
-  update_battle_config: FEATURE_COOLDOWNS["battle.applyPresets"],
+  select_arrow: FEATURE_COOLDOWNS["battle.applyPresets"],
+  select_heal: FEATURE_COOLDOWNS["battle.applyPresets"],
+  select_mana_potion: FEATURE_COOLDOWNS["battle.applyPresets"],
+  select_skills: FEATURE_COOLDOWNS["battle.applyPresets"],
   hunt_change_party_position: FEATURE_COOLDOWNS["battle.placePosition"],
   hunt_lure_id: FEATURE_COOLDOWNS["battle.lockLure"],
   // Hunt

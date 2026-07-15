@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "./core/settings";
 import { defaultSessionView } from "./core/projections/defaults";
 import { patchSessionView } from "./core/projections/patch";
-import { projectAfterEvent } from "./core/projections/project-events";
+import { projectAfterEvent, projectAfterEvents } from "./core/projections/project-events";
 import { toBotState } from "./core/projections/to-bot-state";
 import { inventoryAmountsFromItems, inventoryItemsFromAmounts } from "./inventory";
-import { resolveSellVenueForItem, isMarketOpenOrderLimitError } from "./domain/loot-sell";
+import { resolveSellVenueForItem, isMarketOpenOrderLimitError, normalizeCategorySellMode } from "./domain/loot-sell";
 import { executeItemSell, executeLootSellsForItems } from "./loot-sell";
 import { DEFAULT_MARKET_TAX_PERCENT } from "./market/constants";
 
@@ -147,15 +147,63 @@ describe("resolveSellVenueForItem", () => {
     expect(resolveSellVenueForItem(toBotState(settings, view), 14, pricing)).toBe("market");
   });
 
-  it("keeps mounts by default and markets them when toggle is on", () => {
+  it("keeps mounts by default and markets them when category mode is market", () => {
     const base = stateWithItem(246, true);
     expect(resolveSellVenueForItem(base, 246, pricing)).toBe("exclude");
 
     const withMounts = {
       ...base,
-      settings: { ...base.settings, marketSellMountItems: true },
+      settings: { ...base.settings, mountSellMode: "market" as const },
     };
     expect(resolveSellVenueForItem(withMounts, 246, pricing)).toBe("market");
+  });
+
+  it("keeps imbuement materials by default and markets them when category mode is market", () => {
+    // Vampire Teeth (63) — imbuement ingredient
+    const base = stateWithItem(63, true);
+    expect(resolveSellVenueForItem(base, 63, pricing)).toBe("exclude");
+
+    const withImbuements = {
+      ...base,
+      settings: { ...base.settings, imbuementSellMode: "market" as const },
+    };
+    expect(resolveSellVenueForItem(withImbuements, 63, pricing)).toBe("market");
+  });
+
+  it("keeps craft items by default and markets them when category mode is market", () => {
+    // Gold Token (578) — craft resource
+    const base = stateWithItem(578, true);
+    expect(resolveSellVenueForItem(base, 578, pricing)).toBe("exclude");
+
+    const withCraft = {
+      ...base,
+      settings: { ...base.settings, craftSellMode: "market" as const },
+    };
+    expect(resolveSellVenueForItem(withCraft, 578, pricing)).toBe("market");
+  });
+
+  it("keeps enchant items by default and markets them when category mode is market", () => {
+    // Moonlight Crystals (336) — enchant resource
+    const base = stateWithItem(336, true);
+    expect(resolveSellVenueForItem(base, 336, pricing)).toBe("exclude");
+
+    const withMarket = {
+      ...base,
+      settings: { ...base.settings, enchantSellMode: "market" as const },
+    };
+    expect(resolveSellVenueForItem(withMarket, 336, pricing)).toBe("market");
+  });
+
+  it("npc-sells craft items when category mode is npc", () => {
+    // Grant of Arms (601) — craft resource with NPC price
+    const base = stateWithItem(601, true);
+    expect(resolveSellVenueForItem(base, 601, pricing)).toBe("exclude");
+
+    const withNpc = {
+      ...base,
+      settings: { ...base.settings, craftSellMode: "npc" as const },
+    };
+    expect(resolveSellVenueForItem(withNpc, 601, pricing)).toBe("npc");
   });
 
   it("uses min rarity tier for market rule", () => {
@@ -165,6 +213,53 @@ describe("resolveSellVenueForItem", () => {
     };
     // Small Ruby is tier 1 → NPC when min is 2
     expect(resolveSellVenueForItem(state, 14, pricing)).toBe("npc");
+  });
+
+  it("applies min rarity sell mode for items at or above the tier", () => {
+    const market = {
+      ...stateWithItem(14, true),
+      settings: {
+        ...defaultSettings(),
+        marketSellMinRarityTier: 1,
+        minRaritySellMode: "market" as const,
+      },
+    };
+    expect(resolveSellVenueForItem(market, 14, pricing)).toBe("market");
+
+    const keep = {
+      ...market,
+      settings: { ...market.settings, minRaritySellMode: "keep" as const },
+    };
+    expect(resolveSellVenueForItem(keep, 14, pricing)).toBe("exclude");
+
+    const npc = {
+      ...market,
+      settings: { ...market.settings, minRaritySellMode: "npc" as const },
+    };
+    expect(resolveSellVenueForItem(npc, 14, pricing)).toBe("npc");
+  });
+
+  it("markets classification-only gear via rarity fallback", () => {
+    // Umbral Blade: classification 3, no rarityBorderTier, no NPC price
+    const state = {
+      ...stateWithItem(413, true),
+      settings: { ...defaultSettings(), marketSellMinRarityTier: 3 },
+    };
+    expect(resolveSellVenueForItem(state, 413, pricing)).toBe("market");
+
+    const belowMin = {
+      ...state,
+      settings: { ...state.settings, marketSellMinRarityTier: 4 },
+    };
+    expect(resolveSellVenueForItem(belowMin, 413, pricing)).toBe("none");
+  });
+});
+
+describe("normalizeCategorySellMode", () => {
+  it("keeps explicit modes and maps legacy boolean toggles to market", () => {
+    expect(normalizeCategorySellMode("npc")).toBe("npc");
+    expect(normalizeCategorySellMode(undefined)).toBe("keep");
+    expect(normalizeCategorySellMode(undefined, true)).toBe("market");
   });
 });
 
@@ -207,6 +302,76 @@ describe("inventory projection + executeItemSell", () => {
     expect(view.inventory.items).toEqual(items);
     expect(view.character.goldCoins).toBe(500);
     expect(inventoryAmountsFromItems(view.inventory.items)).toEqual({ 731: 2, 14: 1 });
+  });
+
+  it("applies monster_loot increments until inventory_snapshot overrides", async () => {
+    const afterLoot = await projectAfterEvents(
+      [
+        {
+          kind: "monster_loot",
+          direction: "receive",
+          data: {
+            subType: 1 as const,
+            totalLootValue: 37026,
+            dropCount: 1,
+            drops: [
+              {
+                groundUuid: "019f5ea9-63a2-7bb3-81fb-b5a9a280ea27",
+                itemId: 244,
+                amount: 3,
+              },
+            ],
+          },
+          raw: "",
+        },
+        {
+          kind: "monster_loot",
+          direction: "receive",
+          data: {
+            subType: 1 as const,
+            totalLootValue: 100,
+            dropCount: 1,
+            drops: [
+              {
+                groundUuid: "019f5ea9-63a2-7bb3-81fb-b5a9a280ea28",
+                itemId: 709,
+                amount: 2,
+              },
+            ],
+          },
+          raw: "",
+        },
+      ],
+      { initialView: defaultSessionView() }
+    );
+
+    expect(inventoryAmountsFromItems(afterLoot.inventory.items)).toEqual({
+      244: 3,
+      709: 2,
+    });
+
+    const snapshotItems = inventoryItemsFromAmounts({ 731: 5 });
+    const afterSnapshot = await projectAfterEvent(
+      {
+        kind: "inventory_snapshot",
+        direction: "receive",
+        data: {
+          goldCoins: 100,
+          reserved: 0,
+          padding: 0,
+          depotItemCount: 0,
+          capacity: 40,
+          usedSlots: 1,
+          unknownByte: 0,
+          items: snapshotItems,
+        },
+        raw: "",
+      },
+      { initialView: afterLoot }
+    );
+
+    expect(afterSnapshot.inventory.items).toEqual(snapshotItems);
+    expect(inventoryAmountsFromItems(afterSnapshot.inventory.items)).toEqual({ 731: 5 });
   });
 
   it("npc-sells junk and reports sold amounts", async () => {

@@ -34,6 +34,25 @@ export interface DebugTypeStats {
   receive: number;
 }
 
+/** One CommandBus attempt: outbound send + matched response (or timeout). */
+export interface DebugCommandRecord {
+  id: string;
+  at: number;
+  finishedAt: number;
+  commandId: string;
+  /** Expected response type(s) from the protocol map (joined with ` | ` when multiple). */
+  expectedResponseType?: string;
+  /** Outbound Stonegy message `{ type, data }`. */
+  sent: unknown;
+  /** Matched inbound response message, when received before timeout. */
+  response?: unknown;
+  status: "ok" | "failed" | "timeout" | "sent" | "error";
+  success?: boolean;
+  errorMessage?: string;
+  /** 1-based attempt index when the bus retries on timeout. */
+  attempt: number;
+}
+
 export interface DebugTelemetrySnapshot {
   events: DebugEventRecord[];
   /** Latest event per `${eventKey}:${direction}`. */
@@ -41,6 +60,8 @@ export interface DebugTelemetrySnapshot {
   countsByType: Record<string, DebugTypeStats>;
   unknownEvents: DebugEventRecord[];
   schemaMismatchEvents: DebugEventRecord[];
+  /** Rolling buffer of recent CommandBus attempts (newest first). */
+  lastCommands: DebugCommandRecord[];
   /** Rolling buffer of recent service flow traces (newest first). */
   flowTraces: FlowTrace[];
   /** In-flight flows (not yet finished) — included when copying debug state. */
@@ -50,6 +71,7 @@ export interface DebugTelemetrySnapshot {
 const MAX_DEBUG_EVENTS = 300;
 const MAX_UNKNOWN_EVENTS = 100;
 const MAX_SCHEMA_MISMATCH_EVENTS = 100;
+const MAX_LAST_COMMANDS = 50;
 const MAX_FLOW_TRACES = 50;
 const PREVIEW_LENGTH = 160;
 
@@ -62,6 +84,7 @@ export function emptyDebugTelemetry(): DebugTelemetrySnapshot {
     countsByType: {},
     unknownEvents: [],
     schemaMismatchEvents: [],
+    lastCommands: [],
     flowTraces: [],
     activeFlows: [],
   };
@@ -73,7 +96,26 @@ export function clearDebugTelemetry(snapshot: DebugTelemetrySnapshot): void {
   snapshot.countsByType = {};
   snapshot.unknownEvents = [];
   snapshot.schemaMismatchEvents = [];
+  snapshot.lastCommands = [];
   clearFlowTraces(snapshot);
+}
+
+export function recordDebugCommand(
+  snapshot: DebugTelemetrySnapshot,
+  record: Omit<DebugCommandRecord, "id"> & { id?: string }
+): DebugCommandRecord {
+  if (!snapshot.lastCommands) {
+    snapshot.lastCommands = [];
+  }
+  const entry: DebugCommandRecord = {
+    ...record,
+    id: record.id ?? nextDebugEventId(),
+    sent: serializeForDebug(record.sent),
+    response:
+      record.response !== undefined ? serializeForDebug(record.response) : undefined,
+  };
+  pushLimited(snapshot.lastCommands, entry, MAX_LAST_COMMANDS);
+  return entry;
 }
 
 export function recordFlowTrace(
@@ -216,6 +258,16 @@ export function sanitizeFlowTrace(trace: FlowTrace): FlowTrace {
 
 /** In-place heal so already-recorded cyclic traces cannot break message serialization. */
 export function sanitizeDebugTelemetry(snapshot: DebugTelemetrySnapshot): DebugTelemetrySnapshot {
+  if (snapshot.lastCommands?.length) {
+    snapshot.lastCommands = snapshot.lastCommands.map((entry) => ({
+      ...entry,
+      sent: serializeForDebug(entry.sent),
+      response:
+        entry.response !== undefined ? serializeForDebug(entry.response) : undefined,
+    }));
+  } else if (!snapshot.lastCommands) {
+    snapshot.lastCommands = [];
+  }
   if (snapshot.flowTraces?.length) {
     snapshot.flowTraces = snapshot.flowTraces.map(sanitizeFlowTrace);
   }

@@ -7,8 +7,8 @@ import {
   buildLootSplitHistoryEntry,
   getEffectiveLootSplitCompleted,
   getRemainingLeaderTransfers,
-  reconcileLootSplitProgress,
 } from "./loot-split-progress";
+import { reconcileLootSplitProgress } from "../../projections/loot-split-progress";
 
 const sampleSplitter: PartyLootSplitter = {
   leaderId: "leader-id",

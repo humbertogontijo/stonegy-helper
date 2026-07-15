@@ -1,10 +1,11 @@
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import { isLootSellEnabled } from "../../../lib/domain/loot-sell";
 import {
   FEATURES,
   FEATURE_TAB_ORDER,
 } from "../../../lib/core/features/instances";
-import type { Feature, FeatureId } from "../../../lib/core/features/types";
+import type { Feature } from "../../../lib/core/features/types";
+import type { FeatureId } from "../../../lib/core/services/types";
 
 export type { FeatureId, Feature };
 export { FEATURES, FEATURE_TAB_ORDER };
@@ -118,7 +119,7 @@ export function getFeatureStatus(featureId: FeatureId, state: BotState | null): 
       const parts: string[] = [];
       if (isLootSellEnabled(state.settings)) parts.push("Auto-sell on");
       if (Object.keys(state.settings.lootSellModeByItemId ?? {}).length > 0) {
-        parts.push("Sell overrides");
+        parts.push("Item overrides");
       }
       if (state.settings.autoSplitLootOnHuntFinished) parts.push("Auto loot split");
       return {
@@ -164,6 +165,9 @@ export function getFeatureStatus(featureId: FeatureId, state: BotState | null): 
       if (state.settings.keepAliveEnabled !== false) {
         parts.push("Anti-disconnect on");
       }
+      if (state.settings.autoReconnectEnabled) {
+        parts.push("Auto reconnect on");
+      }
       if (state.settings.autoConfirmReadyCheck) {
         parts.push("Auto confirm ready");
       }
@@ -191,6 +195,10 @@ export function getFeatureStatus(featureId: FeatureId, state: BotState | null): 
 
 export function isHuntControlledByParent(state: BotState | null): boolean {
   return !!state?.settings.autoTaskerEnabled;
+}
+
+export function isLureControlledByTasks(state: BotState | null): boolean {
+  return !!state?.settings.autoTaskerEnabled && !!state?.settings.taskerMaxLure;
 }
 
 export function getTabBadge(_tabId: FeatureId, masterOn: boolean): TabBadgeInfo {

@@ -1,4 +1,4 @@
-import type { MarketSnapshotData } from "../types";
+import type { MarketSnapshotData } from "../../protocol-messages";
 
 /** Trimmed from captured `market:snapshot` traffic (browse + item filter). */
 export const sampleMarketSnapshotBrowse: MarketSnapshotData = {

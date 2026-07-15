@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  canArmFeature,
   defaultFeatureMasters,
   getFeatureMasterOffPatch,
 } from "../lib/core/features/feature-control";
 import {
-  canArmFeature,
   isSubFeatureLocked,
   setFeatureMaster,
   setSubFeatureEnabled,
@@ -118,13 +118,20 @@ describe("isSubFeatureLocked", () => {
     expect(isSubFeatureLocked(ctx, "market.intervalScan")).toBe(false);
   });
 
-  it("locks only battle lure when auto tasker is running", () => {
+  it("locks only battle lure when auto tasker is running with max lure", () => {
     const ctx = createTestContext({ battle: true, loot: true, hunt: true });
-    ctx.session.updateSettings({ autoTaskerEnabled: true });
+    ctx.session.updateSettings({ autoTaskerEnabled: true, taskerMaxLure: true });
     expect(isSubFeatureLocked(ctx, "battle.lockLure")).toBe(true);
     expect(isSubFeatureLocked(ctx, "battle.placePosition")).toBe(false);
     expect(isSubFeatureLocked(ctx, "battle.applyPresets")).toBe(false);
     expect(isSubFeatureLocked(ctx, "loot.autoSell")).toBe(false);
+    expect(isSubFeatureLocked(ctx, "hunt.autoHunt")).toBe(true);
+  });
+
+  it("does not lock battle lure when tasker max lure is off", () => {
+    const ctx = createTestContext({ battle: true, hunt: true });
+    ctx.session.updateSettings({ autoTaskerEnabled: true, taskerMaxLure: false });
+    expect(isSubFeatureLocked(ctx, "battle.lockLure")).toBe(false);
     expect(isSubFeatureLocked(ctx, "hunt.autoHunt")).toBe(true);
   });
 });

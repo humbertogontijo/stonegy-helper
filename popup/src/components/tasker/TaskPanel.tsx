@@ -1,16 +1,15 @@
 import { useMemo } from "react";
 import {
-  formatActiveTask,
-  getActiveTaskForQuest,
-  getMission,
+  formatMonsterTaskProgress,
+  isMissionTasksComplete,
+  isStaleClaimTaskerStatus,
   listMonsterTaskQuests,
-  resolveTaskHuntId,
+  previewTaskerHunt,
 } from "../../../../lib/domain/tasks";
 import { getHuntById } from "../../../../lib/hunts";
 import { sendBot } from "../../api/bot";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
-import { useLeaveHuntToggleCooldown } from "../../hooks/useLeaveHuntToggleCooldown";
 import { usePersistedField } from "../../hooks/usePersistedField";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";
 import { FeatureInputs } from "../ui/FeatureInputs";
@@ -18,6 +17,8 @@ import { SplitSubFeatureDetail } from "../ui/FeatureHubNavigator";
 import { RefreshIconButton } from "../ui/RefreshIconButton";
 import { StonegyPanel } from "../ui/StonegyPanel";
 import { StonegySelect } from "../ui/StonegySelect";
+import { StonegyToggle } from "../ui/StonegyToggle";
+import { SubFeatureSection } from "../ui/SubFeatureSection";
 import type { SubFeatureBadge } from "../ui/FeatureHubNavigator";
 
 interface TaskPanelProps {
@@ -34,6 +35,10 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
     state?.settings.selectedTaskQuestId != null ? String(state.settings.selectedTaskQuestId) : undefined,
     "6"
   );
+  const [taskerMaxLure, setTaskerMaxLure] = usePersistedField(
+    state?.settings.taskerMaxLure,
+    true
+  );
 
   const questOptions = useMemo(
     () =>
@@ -44,26 +49,51 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
     []
   );
 
-  const activeTask =
-    state && state.settings.selectedTaskQuestId != null
-      ? getActiveTaskForQuest(state.quests.activeMonsterTasks, state.settings.selectedTaskQuestId)
-      : null;
+  const questIdNum = Number(selectedQuestId) || 6;
 
-  const mission =
-    activeTask && state?.settings.selectedTaskQuestId != null
-      ? getMission(state.settings.selectedTaskQuestId, activeTask.missionId)
-      : undefined;
+  const preview = useMemo(
+    () =>
+      previewTaskerHunt(questIdNum, {
+        activeTasks: state?.quests.activeMonsterTasks ?? [],
+        finishedTaskIds: state?.character.finishedTasks ?? [],
+        level: state?.character.level ?? null,
+      }),
+    [
+      questIdNum,
+      state?.quests.activeMonsterTasks,
+      state?.character.finishedTasks,
+      state?.character.level,
+    ]
+  );
 
-  const targetHuntId =
-    activeTask && state ? resolveTaskHuntId(activeTask, state.character.level) : state?.settings.taskerTargetHuntId;
+  const { activeTasks, mission } = preview;
+  const hasActiveTasks = activeTasks.length > 0;
+  const targetHuntId = preview.huntId ?? state?.settings.taskerTargetHuntId ?? null;
   const targetHunt = targetHuntId != null ? getHuntById(targetHuntId) : undefined;
+  const huntIsPreview = !hasActiveTasks && preview.huntId != null;
+
+  const statusDisplay = useMemo(() => {
+    const raw = state?.settings.taskerStatus || "";
+    const phase = state?.settings.taskerPhase;
+    const incomplete = hasActiveTasks && !isMissionTasksComplete(activeTasks);
+    const claimingOrDelivering = phase === "claiming" || phase === "delivering";
+
+    if (incomplete && !claimingOrDelivering && isStaleClaimTaskerStatus(raw)) {
+      return state?.settings.autoTaskerEnabled ? "Hunting for task" : "In progress";
+    }
+
+    return raw || "—";
+  }, [
+    activeTasks,
+    hasActiveTasks,
+    state?.settings.autoTaskerEnabled,
+    state?.settings.taskerPhase,
+    state?.settings.taskerStatus,
+  ]);
 
   const saveQuest = (questId: string) => {
     void saveSettings({ selectedTaskQuestId: Number(questId) || null });
   };
-
-  const { toggleDisabled: leaveHuntToggleDisabled, runStopAfterLeaveHunt } =
-    useLeaveHuntToggleCooldown();
 
   const { masterOn, subsDisabled, handleMasterChange } = useFeatureMasterWithStop("tasks", {
     state,
@@ -83,7 +113,7 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
       );
       return;
     }
-    void runStopAfterLeaveHunt(state, runAction, () => sendBot("bot:stop-auto-tasker"));
+    void runAction(() => sendBot("bot:stop-auto-tasker"));
   };
 
   const taskerBadge: SubFeatureBadge = state?.settings.autoTaskerEnabled
@@ -111,6 +141,22 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
               saveQuest(event.target.value);
             }}
           />
+          <p className="m-0 text-[11px] leading-snug text-[var(--text-muted)]">
+            {huntIsPreview ? "Next hunt" : "Target hunt"}:{" "}
+            <span className="text-[var(--text-body)]">
+              {targetHunt
+                ? `#${targetHunt.id} · ${targetHunt.title}`
+                : targetHuntId != null
+                  ? `#${targetHuntId}`
+                  : "—"}
+            </span>
+            {mission && !hasActiveTasks ? (
+              <>
+                {" "}
+                · {mission.title}
+              </>
+            ) : null}
+          </p>
         </FeatureInputs>
       }
       subFeatures={[
@@ -121,7 +167,7 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
           badge: taskerBadge,
           toggle: {
             checked: !!state?.settings.autoTaskerEnabled,
-            disabled: !state?.connection.connected || subsDisabled || leaveHuntToggleDisabled,
+            disabled: !state?.connection.connected || subsDisabled,
             onChange: handleTaskerToggle,
           },
           action: {
@@ -134,6 +180,21 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
           },
           content: (
             <SplitSubFeatureDetail
+              controls={
+                <SubFeatureSection hideTitle lockAutomation={subsDisabled}>
+                  <StonegyToggle
+                    id="tasker-max-lure"
+                    label="Max lure"
+                    checked={taskerMaxLure}
+                    disabled={subsDisabled}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setTaskerMaxLure(checked);
+                      void saveSettings({ taskerMaxLure: checked });
+                    }}
+                  />
+                </SubFeatureSection>
+              }
               status={
                 <StonegyPanel
                   title="Task status"
@@ -148,14 +209,34 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
                   <dl className="grid gap-2 text-xs">
                     <div>
                       <dt className="text-[var(--text-muted)]">Status</dt>
-                      <dd>{state?.settings.taskerStatus || "—"}</dd>
+                      <dd>{statusDisplay}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--text-muted)]">
+                        {hasActiveTasks ? "Mission" : "Next mission"}
+                      </dt>
+                      <dd>{mission?.title ?? "—"}</dd>
                     </div>
                     <div>
                       <dt className="text-[var(--text-muted)]">Active task</dt>
-                      <dd>{formatActiveTask(activeTask)}</dd>
+                      <dd>
+                        {hasActiveTasks ? (
+                          <ul className="m-0 list-none p-0">
+                            {activeTasks.map((task) => (
+                              <li key={`${task.missionId}-${task.monsterId ?? "x"}`}>
+                                {formatMonsterTaskProgress(task)}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          "No active task"
+                        )}
+                      </dd>
                     </div>
                     <div>
-                      <dt className="text-[var(--text-muted)]">Target hunt</dt>
+                      <dt className="text-[var(--text-muted)]">
+                        {huntIsPreview ? "Next hunt" : "Target hunt"}
+                      </dt>
                       <dd>
                         {targetHunt
                           ? `#${targetHunt.id} · ${targetHunt.title}`
@@ -164,12 +245,6 @@ export function TaskPanel({ state, runAction, saveSettings, showFeedback }: Task
                             : "—"}
                       </dd>
                     </div>
-                    {mission ? (
-                      <div>
-                        <dt className="text-[var(--text-muted)]">Mission</dt>
-                        <dd>{mission.title}</dd>
-                      </div>
-                    ) : null}
                   </dl>
                 </StonegyPanel>
               }

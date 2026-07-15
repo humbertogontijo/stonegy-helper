@@ -1,5 +1,8 @@
+import { BOSSES } from "./data/bosses";
 import { HUNTS } from "./data/hunts";
 import { MONSTERS } from "./data/monsters";
+import { decodeBossHuntId, decodeQuestHuntId } from "./hunt-ids";
+import { getQuestCombatMonsterIds } from "./quests";
 import type { MonsterLootEntry, MonsterRecord } from "./types";
 
 const monstersById = new Map<number, MonsterRecord>(
@@ -19,8 +22,27 @@ export function getMonsterLoot(monsterId: number): MonsterLootEntry[] {
 }
 
 export function getHuntMonsterIds(huntId: number): number[] {
-  const hunt = (HUNTS as Array<{ id: number; monsters?: number[] }>).find((entry) => entry.id === huntId);
-  return hunt?.monsters ?? [];
+  const hunt = (HUNTS as Array<{ id: number; monsters?: number[] }>).find(
+    (entry) => entry.id === huntId
+  );
+  if (hunt) {
+    return hunt.monsters ?? [];
+  }
+
+  const bossId = decodeBossHuntId(huntId);
+  if (bossId != null) {
+    const boss = (BOSSES as Array<{ id: number; monsterId: number }>).find(
+      (entry) => entry.id === bossId
+    );
+    return boss ? [boss.monsterId] : [];
+  }
+
+  const questRef = decodeQuestHuntId(huntId);
+  if (questRef) {
+    return getQuestCombatMonsterIds(questRef.questId, questRef.missionId);
+  }
+
+  return [];
 }
 
 export function getHuntDroppedItems(huntId: number): MonsterLootEntry[] {

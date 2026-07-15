@@ -22,7 +22,7 @@ export const lootLootSplitSubFeature: SubFeature = {
 export const lootFeature: Feature = {
   id: "loot",
   label: "Loot",
-  description: "Configures loot selling, pricing rules, per-item sell overrides, and loot split.",
+  description: "Configures loot selling, pricing rules, per-item overrides, and loot split.",
   dependsOn: ["market"],
   subFeatures: [lootAutoSellSubFeature, lootLootSplitSubFeature],
 };

@@ -45,6 +45,7 @@ describe("toBotState", () => {
 
     expect(state.battlePreset.selectedHeal).toBe("Ultimate Healing");
     expect(state.battlePreset.selectedSkills[0]).toBe("Exori");
+    expect(state.characterBattlePreset.selectedHeal).toBe("Ultimate Healing");
   });
 
   it("prefers a configured settings battle preset over the character preset", () => {
@@ -71,5 +72,6 @@ describe("toBotState", () => {
     const state = toBotState(settings, view);
 
     expect(state.battlePreset.selectedHeal).toBe("Configured Heal");
+    expect(state.characterBattlePreset.selectedHeal).toBe("Character Heal");
   });
 });

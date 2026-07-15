@@ -10,6 +10,9 @@ function defaultEqual<T>(a: T, b: T): boolean {
  *
  * Pass `scopeKey` (e.g. characterId) to reset local state when the owning
  * profile changes without unmounting the component.
+ *
+ * `remoteValue` of `undefined` means "not loaded yet" (use fallback). Explicit
+ * `null` is kept so nullable settings can clear the local field.
  */
 export function usePersistedField<T>(
   remoteValue: T | undefined,
@@ -17,7 +20,8 @@ export function usePersistedField<T>(
   isEqual: (a: T, b: T) => boolean = defaultEqual,
   scopeKey?: string | null
 ): [T, (value: T | ((prev: T) => T)) => void] {
-  const resolvedRemote = remoteValue ?? fallback;
+  // Only treat `undefined` as missing so nullable remotes (e.g. null position) stick.
+  const resolvedRemote = remoteValue !== undefined ? remoteValue : fallback;
   const [local, setLocalState] = useState(resolvedRemote);
   const dirtyRef = useRef(false);
   const initializedRef = useRef(false);

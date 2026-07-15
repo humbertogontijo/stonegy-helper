@@ -1,4 +1,4 @@
-import { decodeBinaryMessage, isGoldBalance, isGroundLoot, isInventorySnapshot, isItemGrant, isMarketSnapshot } from "../../binary/decode";
+import { decodeBinaryMessage, isGoldBalance, isGroundItemUpdate, isMonsterLoot, isInventorySnapshot, isItemGrant, isMarketSnapshot } from "../../binary/decode";
 import { marketSnapshotBodyToData } from "../../binary/market-snapshot";
 import { parseMessage, ReceiveMessageTypes, type StonegyMessage } from "../../protocol";
 import type { WireMessage } from "../transport";
@@ -36,10 +36,20 @@ export function normalizeWireMessage(wire: WireMessage): GameEvent[] {
           },
         ];
       }
-      if (isGroundLoot(decoded)) {
+      if (isMonsterLoot(decoded)) {
         return [
           {
-            kind: "ground_loot",
+            kind: "monster_loot",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isGroundItemUpdate(decoded)) {
+        return [
+          {
+            kind: "ground_item_update",
             direction: "receive",
             data: decoded.body.data,
             raw: wire.data,

@@ -41,6 +41,7 @@ export interface LogEntry {
 }
 
 export type {
+  DebugCommandRecord,
   DebugEventRecord,
   DebugTelemetrySnapshot,
   DebugTypeStats,
@@ -161,7 +162,10 @@ export interface BotState {
   quests: QuestProjection;
   playerState: PlayerState;
   playerStateDetail: string;
+  /** Resolved preset for the selected hunt (configured settings, else live game). */
   battlePreset: BattlePreset;
+  /** Last battle config received from the game (ignores per-hunt overrides). */
+  characterBattlePreset: BattlePreset;
   settings: BotSettings;
   logs: LogEntry[];
   debug: DebugTelemetrySnapshot;
@@ -176,6 +180,24 @@ export interface HuntSummary {
   title: string;
   recommendedLevel?: number;
   levelMin?: number;
+}
+
+/** Kind of entry shown in the Battle hunt selector. */
+export type HuntSelectorKind = "hunt" | "boss" | "quest";
+
+export interface HuntSelectorOption extends HuntSummary {
+  kind: HuntSelectorKind;
+  /** Select/display label (includes Boss/Quest prefix when needed). */
+  label: string;
+}
+
+export interface BossRecord {
+  id: number;
+  monsterId: number;
+  rarity: number;
+  bossType: string;
+  recommendedLevel?: number;
+  [key: string]: unknown;
 }
 
 export interface TilePosition {
@@ -243,6 +265,8 @@ export interface ItemRecord {
   slot?: string;
   npcSellPrice?: number;
   rarityBorderTier?: number;
+  /** Equipment upgrade class (1–4); used as market-rarity fallback when rarityBorderTier is absent. */
+  classification?: number;
   stackable?: boolean;
   mountItem?: boolean;
   untradable?: boolean;

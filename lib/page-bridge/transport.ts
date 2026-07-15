@@ -1,6 +1,5 @@
 import {
   BRIDGE_CHANNELS,
-  MESSAGE_SOURCES,
   pageBridgeSecretStorageKey,
   pageBridgeSymbolKey,
 } from "./constants";
@@ -185,6 +184,3 @@ export async function readPageBridgeStatus(
 
   return undefined;
 }
-
-// Re-export for callers that post authenticated messages (unused currently, kept for tests).
-export { MESSAGE_SOURCES };

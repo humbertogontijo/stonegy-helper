@@ -151,6 +151,28 @@ describe("loot splitter helpers", () => {
     const state = toBotState(session.settings, session.view);
     expect(splitSkip(state, sampleSplitter)).toBe("insufficient_gold");
   });
+
+  it("skips when a non-leader owes gold to the leader", () => {
+    const splitterWithDebt: PartyLootSplitter = {
+      ...sampleSplitter,
+      splitter: {
+        ...sampleSplitter.splitter,
+        members: sampleSplitter.splitter.members.map((member) =>
+          member.playerId === MEMBER_B_ID
+            ? {
+                ...member,
+                settlementDeltaGold: -100_000,
+                transferFromLeaderGold: 0,
+                owedToLeaderGold: 100_000,
+              }
+            : member
+        ),
+      },
+    };
+    const session = leaderSession(splitterWithDebt);
+    const state = toBotState(session.settings, session.view);
+    expect(splitSkip(state, splitterWithDebt)).toBe("members_owe_leader");
+  });
 });
 
 describe("executeLootSplit", () => {
@@ -168,13 +190,13 @@ describe("executeLootSplit", () => {
       1,
       SendMessageTypes.GOLD_TRANSFER,
       expect.objectContaining({ targetName: "Guild", amount: 572_614, requestId: expect.any(String) }),
-      { cooldownMs: 2500, goldTransferRequestId: expect.any(String) }
+      { cooldownMs: 2500 }
     );
     expect(session.commands.run).toHaveBeenNthCalledWith(
       2,
       SendMessageTypes.GOLD_TRANSFER,
       expect.objectContaining({ targetName: "Member", amount: 640_617, requestId: expect.any(String) }),
-      { cooldownMs: 2500, goldTransferRequestId: expect.any(String) }
+      { cooldownMs: 2500 }
     );
     expect(session.commands.run).toHaveBeenNthCalledWith(
       3,
@@ -261,6 +283,31 @@ describe("executeLootSplit", () => {
     const result = await executeLootSplit(session);
 
     expect(result).toMatchObject({ ok: false, reason: "no_splitter" });
+    expect(session.commands.run).not.toHaveBeenCalled();
+  });
+
+  it("skips when a non-leader owes gold to the leader", async () => {
+    const splitterWithDebt: PartyLootSplitter = {
+      ...sampleSplitter,
+      splitter: {
+        ...sampleSplitter.splitter,
+        members: sampleSplitter.splitter.members.map((member) =>
+          member.playerId === MEMBER_B_ID
+            ? {
+                ...member,
+                settlementDeltaGold: -100_000,
+                transferFromLeaderGold: 0,
+                owedToLeaderGold: 100_000,
+              }
+            : member
+        ),
+      },
+    };
+    const session = leaderSession(splitterWithDebt);
+
+    const result = await executeLootSplit(session);
+
+    expect(result).toMatchObject({ ok: false, reason: "members_owe_leader" });
     expect(session.commands.run).not.toHaveBeenCalled();
   });
 

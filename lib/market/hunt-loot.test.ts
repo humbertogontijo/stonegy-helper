@@ -69,18 +69,15 @@ describe("getQuickSellDeselectedItemIds", () => {
     expect(deselected).toContain(questItemId);
   });
 
-  it("deselects mounts by default and keeps them selected when mount market sell is on", () => {
+  it("deselects mounts kept by default via special category rule", () => {
     // Carrot on a Stick (246) — mountItem
     const mountId = 246;
     const off = getQuickSellDeselectedItemIds(1, {
       settings: settings({
         lootSellModeByItemId: {},
-        marketSellMountItems: false,
       }),
       autoSellLootEnabled: true,
     });
-    // Hunt 1 may not drop mounts — test via override keep/market on junk hunt is enough;
-    // resolve rule for mount is covered in domain tests. Here verify keep override.
     const withKeep = getQuickSellDeselectedItemIds(junkHuntId, {
       settings: settings({
         lootSellModeByItemId: { [mountId]: "keep" },

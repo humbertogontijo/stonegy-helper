@@ -3,7 +3,11 @@ import { appendLog } from "./projections/logs";
 import { parseMessage, ReceiveMessageTypes, SendMessageTypes } from "../protocol";
 import { shouldAttributeMarketSnapshotToItem } from "../market/attribution";
 import { MarketService } from "./services/market.service";
-import { recordDebugWireMessage, emptyDebugTelemetry } from "./events/debug-telemetry";
+import {
+  emptyDebugTelemetry,
+  recordDebugCommand,
+  recordDebugWireMessage,
+} from "./events/debug-telemetry";
 import { asStonegyMessage, normalizeWireMessage } from "./events/normalize";
 import type { GameEvent } from "./events/types";
 import { CommandBus, type CommandOutcome } from "./commands/bus";
@@ -72,7 +76,12 @@ export class GameSession {
     this.settings = { ...defaultSettings(), ...options.settings };
     this.onChange = options.onChange;
     this.marketSnapshotRequestedItemId = options.marketSnapshotRequestedItemId;
-    this.commands = new CommandBus(transport, () => this.view);
+    this.commands = new CommandBus(transport, () => this.view, {
+      onCommandComplete: (record) => {
+        recordDebugCommand(this.telemetry.debug, record);
+        this.emitChange();
+      },
+    });
     this.services = new ServiceRegistry({
       session: this,
       masters: options.featureMasters,
@@ -405,17 +414,11 @@ export class GameSession {
     }
 
     if (deferredSnapshotEvents.length) {
-      void Promise.resolve()
-        .then(async () => {
-          for (const event of deferredSnapshotEvents) {
-            await this.dispatchFeatureEvent(event);
-          }
-        })
-        .catch((error) => {
-          console.error(
-            `[session] deferred snapshot error: ${error instanceof Error ? error.message : error}`
-          );
-        });
+      this.deferFromWire(async () => {
+        for (const event of deferredSnapshotEvents) {
+          await this.dispatchFeatureEvent(event);
+        }
+      });
     }
   }
 }

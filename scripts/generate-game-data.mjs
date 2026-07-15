@@ -14,6 +14,7 @@ const ASSETS_ORIGIN = "https://assets.stonegy-online.com";
 
 const HUNTS_MARKER = "let s=new Map";
 const QUESTS_MARKER = "let np=new Map";
+const BOSSES_MARKER = 'bossType:"Archfoe"';
 
 const DATASET_TYPES = {
   items: 1,
@@ -118,6 +119,29 @@ function evaluateMapExpression(expression, consts = {}) {
 
 function toSortedValues(map) {
   return [...map.values()].sort((a, b) => a.id - b.id);
+}
+
+/** Boss catalog is `let o=[[id, record],...];a=new Map(o)` (not `new Map([[...]])`). */
+function extractBosses(source) {
+  const markerIdx = source.indexOf(BOSSES_MARKER);
+  if (markerIdx < 0) {
+    throw new Error(`Could not find bosses marker in app bundle: ${BOSSES_MARKER}`);
+  }
+
+  const arrayStart = source.lastIndexOf("[[", markerIdx);
+  if (arrayStart < 0) {
+    throw new Error("Could not find bosses array start near bossType marker.");
+  }
+
+  const endToken = "]],a=new Map(o)";
+  const endIdx = source.indexOf(endToken, markerIdx);
+  if (endIdx < 0) {
+    throw new Error("Could not find bosses array end (]],a=new Map(o)).");
+  }
+
+  const expression = source.slice(arrayStart, endIdx + 2);
+  const entries = new Function(`return ${expression}`)();
+  return entries.map((entry) => entry[1]).sort((a, b) => a.id - b.id);
 }
 
 function formatTsValue(value, indent = 0) {
@@ -232,6 +256,7 @@ function prepareStonegyRecords(records) {
 
 async function fetchStaticDataset(staticVersion, datasetName) {
   const manifest = await fetchStaticManifest(staticVersion);
+  console.log("manifest", manifest);
   const dataset = manifest.datasets[datasetName];
 
   if (!dataset?.url) {
@@ -408,6 +433,185 @@ function extractBattleOptions(bundle) {
   return { heals, manaPotions, arrows, bolts, spells };
 }
 
+function extractImbuements(bundle) {
+  const expression = extractArrayExpression(bundle, 'id:"basic_scorch"', '[{id:"');
+  const imbuements = evaluateMapExpression(expression).map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    tier: entry.tier,
+    category: entry.category,
+    icon: entry.icon,
+    description: entry.description,
+    durationMs: entry.durationMs,
+    goldFee: entry.goldFee,
+    protectionGoldFee: entry.protectionGoldFee,
+    successRate: entry.successRate,
+    premiumOnly: !!entry.premiumOnly,
+    ingredients: (entry.ingredients ?? []).map((ingredient) => ({
+      itemName: ingredient.itemName,
+      amount: ingredient.amount,
+    })),
+  }));
+
+  imbuements.sort(
+    (a, b) =>
+      a.category.localeCompare(b.category) ||
+      a.tier.localeCompare(b.tier) ||
+      a.name.localeCompare(b.name)
+  );
+
+  return imbuements;
+}
+
+function defineCraftHelpers() {
+  function aS(id, label, resultItemId, amount) {
+    return {
+      id,
+      craftType: 2,
+      action: "exchange",
+      label,
+      resultItemId,
+      successChancePercent: 100,
+      costs: [{ itemId: 299, amount }],
+    };
+  }
+
+  function aC(id, label, resultItemId) {
+    return {
+      id,
+      craftType: 4,
+      action: "exchange",
+      label,
+      resultItemId,
+      successChancePercent: 100,
+      costs: [{ itemId: 578, amount: 50 }],
+    };
+  }
+
+  function aM(id, label, goldTokenAmount, resultItems) {
+    const primary = resultItems[0];
+    return {
+      id,
+      craftType: 4,
+      action: "exchange",
+      label,
+      resultItemId: primary.itemId,
+      resultAmount: primary.amount,
+      resultItems,
+      successChancePercent: 100,
+      costs: [{ itemId: 578, amount: goldTokenAmount }],
+    };
+  }
+
+  return { aS, aC, aM };
+}
+
+function normalizeCraftCost(cost) {
+  return {
+    itemId: cost.itemId,
+    amount: cost.amount,
+  };
+}
+
+function normalizeCraftRecipe(entry) {
+  const recipe = {
+    id: entry.id,
+    craftType: entry.craftType,
+    action: entry.action,
+    label: entry.label,
+    successChancePercent: entry.successChancePercent,
+    costs: (entry.costs ?? []).map(normalizeCraftCost),
+  };
+
+  if (entry.resultItemId !== undefined) {
+    recipe.resultItemId = entry.resultItemId;
+  }
+  if (entry.resultAmount !== undefined) {
+    recipe.resultAmount = entry.resultAmount;
+  }
+  if (entry.resultItems !== undefined) {
+    recipe.resultItems = entry.resultItems.map(normalizeCraftCost);
+  }
+  if (entry.sourceItemId !== undefined) {
+    recipe.sourceItemId = entry.sourceItemId;
+  }
+  if (entry.downgradeItemId !== undefined) {
+    recipe.downgradeItemId = entry.downgradeItemId;
+  }
+
+  return recipe;
+}
+
+function extractCraft(bundle) {
+  const umbralFamilies = evaluateMapExpression(
+    extractArrayExpression(bundle, 'key:"blade",crudeItemId', "[{key:")
+  );
+
+  const assignment = "let aI=";
+  const start = bundle.indexOf(assignment);
+  const end = bundle.indexOf("];aI.map", start);
+  if (start < 0 || end < 0) {
+    throw new Error("Could not find NPC craft recipe catalog (aI) in app bundle.");
+  }
+
+  const expression = bundle.slice(start + assignment.length, end + 1);
+  const { aS, aC, aM } = defineCraftHelpers();
+  const recipes = new Function("aw", "aS", "aC", "aM", `return ${expression}`)(
+    umbralFamilies,
+    aS,
+    aC,
+    aM
+  ).map(normalizeCraftRecipe);
+
+  recipes.sort(
+    (a, b) => a.craftType - b.craftType || a.id - b.id || a.label.localeCompare(b.label)
+  );
+
+  const typesExpression = extractArrayExpression(
+    bundle,
+    'craftType:1,label:"UMBRAL"',
+    "[{craftType:"
+  );
+  const types = evaluateMapExpression(typesExpression).map((entry) => ({
+    craftType: entry.craftType,
+    label: entry.label,
+  }));
+
+  return {
+    types,
+    umbralFamilies: umbralFamilies.map((entry) => ({
+      key: entry.key,
+      crudeItemId: entry.crudeItemId,
+      umbralItemId: entry.umbralItemId,
+      masterItemId: entry.masterItemId,
+    })),
+    recipes,
+  };
+}
+
+function extractEnchant(bundle) {
+  const expression = extractArrayExpression(bundle, 'label:"Werewolf Amulet"', "[{id:");
+  const enchants = evaluateMapExpression(expression).map((entry) => {
+    const enchant = {
+      id: entry.id,
+      label: entry.label,
+      sourceItemId: entry.sourceItemId,
+      resultItemId: entry.resultItemId,
+      costs: (entry.costs ?? []).map(normalizeCraftCost),
+    };
+    if (entry.goldCost !== undefined) {
+      enchant.goldCost = entry.goldCost;
+    }
+    if (entry.blocksMarketResult !== undefined) {
+      enchant.blocksMarketResult = !!entry.blocksMarketResult;
+    }
+    return enchant;
+  });
+
+  enchants.sort((a, b) => a.id - b.id || a.label.localeCompare(b.label));
+  return enchants;
+}
+
 async function generateGameData() {
   const [bundleUrl, versions] = await Promise.all([
     resolveAppBundleUrl(),
@@ -423,7 +627,11 @@ async function generateGameData() {
 
   const hunts = toSortedValues(evaluateMapExpression(huntsExpression, huntsConsts));
   const quests = toSortedValues(evaluateMapExpression(questsExpression));
+  const bosses = extractBosses(bundle);
   const battleOptions = extractBattleOptions(bundle);
+  const imbuements = extractImbuements(bundle);
+  const craft = extractCraft(bundle);
+  const enchant = extractEnchant(bundle);
   const { url: monstersUrl, monsters } = await fetchMonsters(versions.staticVersion);
   const { url: itemsUrl, items } = await fetchItems(versions.staticVersion);
 
@@ -450,6 +658,12 @@ async function generateGameData() {
       headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
     },
     {
+      path: join(DATA_DIR, "bosses.ts"),
+      exportName: "BOSSES",
+      value: bosses,
+      headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
+    },
+    {
       path: join(DATA_DIR, "monsters.ts"),
       exportName: "MONSTERS",
       value: monsters,
@@ -470,6 +684,24 @@ async function generateGameData() {
       value: battleOptions,
       headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
     },
+    {
+      path: join(DATA_DIR, "imbuement.ts"),
+      exportName: "IMBUEMENTS",
+      value: imbuements,
+      headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
+    },
+    {
+      path: join(DATA_DIR, "craft.ts"),
+      exportName: "CRAFT",
+      value: craft,
+      headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
+    },
+    {
+      path: join(DATA_DIR, "enchant.ts"),
+      exportName: "ENCHANT",
+      value: enchant,
+      headerLines: [...sharedHeader, `// Source bundle: ${bundleUrl}`],
+    },
   ];
 
   for (const file of files) {
@@ -479,6 +711,7 @@ async function generateGameData() {
 
   console.log(`  hunts: ${hunts.length}`);
   console.log(`  quests: ${quests.length}`);
+  console.log(`  bosses: ${bosses.length}`);
   console.log(`  monsters: ${monsters.length}`);
   console.log(`  items: ${items.length}`);
   console.log(`  battle heals: ${battleOptions.heals.length}`);
@@ -486,6 +719,9 @@ async function generateGameData() {
   console.log(`  battle mana potions: ${battleOptions.manaPotions.length}`);
   console.log(`  battle arrows: ${battleOptions.arrows.length}`);
   console.log(`  battle bolts: ${battleOptions.bolts.length}`);
+  console.log(`  imbuements: ${imbuements.length}`);
+  console.log(`  craft recipes: ${craft.recipes.length}`);
+  console.log(`  enchant recipes: ${enchant.length}`);
 }
 
 generateGameData().catch((error) => {

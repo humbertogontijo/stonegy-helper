@@ -3,7 +3,7 @@ import type { GameSession } from "./session";
 /** TTL for manual refresh UX only — not used for automation gates. */
 export const CONTEXT_STALE_MS = 5_000;
 export const INTERACTIVE_COMMAND_TIMEOUT_MS = 4_000;
-/** Default wait for hunt bootstrap after start_hunt. */
+/** Default wait for party:action_result / hunt_bootstrap after start_hunt. */
 export const START_HUNT_TIMEOUT_MS = 10_000;
 
 export function resolveStartHuntTimeoutMs(_session: GameSession): number {

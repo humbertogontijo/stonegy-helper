@@ -38,6 +38,8 @@ export const SendMessageTypes = {
   FRIENDS_GET_SNAPSHOT: "friends_get_snapshot",
   TRADE_GET_SNAPSHOT: "trade_get_snapshot",
   BLESS_GET_SNAPSHOT: "bless_get_snapshot",
+  BLESS_BUY: "bless_buy",
+  DEATH_MODAL_ACK: "death_modal_ack",
   QUEST_GET_SNAPSHOT: "quest_get_snapshot",
   QUEST_DELIVER_MONSTER_TASK: "quest_deliver_monster_task",
   QUEST_CLAIM_REWARD: "quest_claim_reward",
@@ -56,7 +58,10 @@ export const SendMessageTypes = {
   HUNT_LURE_ID: "hunt_lure_id",
   QUICK_SELL_ITEMS: "quick_sell_items",
   QUICK_SELL_SET_PREFERENCES: "quick_sell_set_preferences",
-  UPDATE_BATTLE_CONFIG: "update_battle_config",
+  SELECT_ARROW: "select_arrow",
+  SELECT_HEAL: "select_heal",
+  SELECT_MANA_POTION: "select_mana_potion",
+  SELECT_SKILLS: "select_skills",
   MARKET_GET_SNAPSHOT: "market_get_snapshot",
   MARKET_CREATE_ORDER: "market_create_order",
   MARKET_RESOLVE_ORDER: "market_resolve_order",
@@ -102,10 +107,13 @@ export const ReceiveMessageTypes = {
   GOLD_TRANSFER_RESULT: "gold_transfer_result",
   GOLD_BALANCE: "gold_balance",
   BLESS_SNAPSHOT: "bless:snapshot",
+  BLESS_ACTION_RESULT: "bless:action_result",
+  PLAYER_DEATH: "player_death",
   CHAT_MESSAGE: "chat:message",
   SYSTEM_MESSAGE: "system:message",
   HUNT_BOOTSTRAP: "hunt_bootstrap",
   HUNT_UPDATE_PLAYERS: "hunt:update_players",
+  HUNT_PHASE_UPDATE: "hunt:phase_update",
   HUNT_FINISHED: "hunt_finished",
   HUNT_UPDATE_LURE: "hunt_update_lure",
   MARKET_SNAPSHOT: "market:snapshot",
@@ -124,6 +132,7 @@ export const ReceiveMessageTypes = {
   DEPOT_PATCH: "depot:patch",
   HOUSE_PUBLIC_SNAPSHOT: "house:public_snapshot",
   BOSS_ROTATION_UPDATE: "boss_rotation:update",
+  BOSSTIARY_UPDATE: "bosstiary:update",
 } as const;
 
 export type SendMessageType = (typeof SendMessageTypes)[keyof typeof SendMessageTypes];
@@ -353,6 +362,15 @@ export const sessionBootstrapSchema = looseObject({
 export const protocolHuntSchema = looseObject({
   id: z.number().optional(),
   title: z.string().optional(),
+  mode: z.string().optional(),
+  questFight: looseObject({
+    questId: z.number().optional(),
+    missionId: z.number().optional(),
+  }).nullable().optional(),
+  bossFight: looseObject({
+    bossId: z.number().optional(),
+    id: z.number().optional(),
+  }).nullable().optional(),
 });
 
 export const huntBootstrapSchema = looseObject({
@@ -595,6 +613,19 @@ export const blessSnapshotSchema = strictObject({
   blessings: z.array(blessingSchema),
 });
 
+export const playerDeathPayloadSchema = strictObject({
+  expLost: z.number(),
+  levelBefore: z.number(),
+  levelAfter: z.number(),
+  itemsDeathLost: z.array(z.unknown()),
+  blessingsBeforeDeathCount: z.number(),
+  hadAolEquipped: z.boolean(),
+  aolConsumed: z.boolean(),
+  mode: z.string(),
+  deathAt: z.string(),
+  killedByMonsterId: z.number().nullable().optional(),
+});
+
 export const rgbColorSchema = looseObject({
   r: z.number().optional(),
   g: z.number().optional(),
@@ -680,7 +711,11 @@ export const questTaskPayloadSchema = strictObject({
 export const questClaimRewardPayloadSchema = strictObject({
   questId: z.number(),
   missionId: z.number(),
-  selectedChoiceId: z.number().nullable(),
+  selectedChoiceId: z.union([z.number(), z.string()]).nullable(),
+});
+
+export const blessBuyPayloadSchema = strictObject({
+  blessingId: z.number(),
 });
 
 export const startHuntPayloadSchema = strictObject({
@@ -727,6 +762,29 @@ export const quickSellSetPreferencesPayloadSchema = strictObject({
   deselectedItemIds: z.array(z.number()),
 });
 
+/** 1-based heal slot: 1=primary … 4=quaternary. */
+export const selectHealPayloadSchema = strictObject({
+  selectedHeal: z.string(),
+  selectedHealPercent: z.number(),
+  healIdx: z.number().int().min(1).max(4),
+});
+
+export const selectArrowPayloadSchema = strictObject({
+  selectedArrow: z.string().nullable(),
+});
+
+export const selectManaPotionPayloadSchema = strictObject({
+  selectedManaPotion: z.string().optional(),
+  selectedManaPotionPercent: z.number(),
+});
+
+export const selectSkillsPayloadSchema = strictObject({
+  selectedSkills: z.array(z.string().nullable()),
+  selectedSupportSkill: z.string().nullable(),
+  selectedSupportSkills: z.array(z.string().nullable()),
+  selectedSkillsMinCreatures: z.record(z.string(), z.number()),
+});
+
 export const npcBuyItemPayloadSchema = strictObject({
   itemId: z.number(),
   quantity: z.number(),
@@ -759,7 +817,7 @@ export const marketGetSnapshotPayloadSchema = strictObject({
 
 export const marketCreateOrderPayloadSchema = strictObject({
   itemId: z.number(),
-  tier: z.number(),
+  tier: z.number().optional(),
   eachPrice: z.number(),
   itemAmount: z.number(),
   isBuyOrder: z.boolean(),
@@ -867,6 +925,8 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.FRIENDS_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.TRADE_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.BLESS_GET_SNAPSHOT]: emptyPayloadSchema,
+  [SendMessageTypes.BLESS_BUY]: blessBuyPayloadSchema,
+  [SendMessageTypes.DEATH_MODAL_ACK]: emptyPayloadSchema,
   [SendMessageTypes.QUEST_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.QUEST_DELIVER_MONSTER_TASK]: questTaskPayloadSchema,
   [SendMessageTypes.QUEST_CLAIM_REWARD]: questClaimRewardPayloadSchema,
@@ -885,7 +945,10 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.HUNT_LURE_ID]: huntLureIdPayloadSchema,
   [SendMessageTypes.QUICK_SELL_ITEMS]: quickSellItemsPayloadSchema,
   [SendMessageTypes.QUICK_SELL_SET_PREFERENCES]: quickSellSetPreferencesPayloadSchema,
-  [SendMessageTypes.UPDATE_BATTLE_CONFIG]: battleConfigSchema,
+  [SendMessageTypes.SELECT_ARROW]: selectArrowPayloadSchema,
+  [SendMessageTypes.SELECT_HEAL]: selectHealPayloadSchema,
+  [SendMessageTypes.SELECT_MANA_POTION]: selectManaPotionPayloadSchema,
+  [SendMessageTypes.SELECT_SKILLS]: selectSkillsPayloadSchema,
   [SendMessageTypes.MARKET_GET_SNAPSHOT]: marketGetSnapshotPayloadSchema,
   [SendMessageTypes.MARKET_CREATE_ORDER]: marketCreateOrderPayloadSchema,
   [SendMessageTypes.MARKET_RESOLVE_ORDER]: marketResolveOrderPayloadSchema,
@@ -926,6 +989,13 @@ export const huntUpdateLurePayloadSchema = strictObject({
 
 export const huntUpdatePlayersPayloadSchema = looseObject({
   players: z.array(z.record(z.string(), z.unknown())).optional(),
+});
+
+export const huntPhaseUpdatePayloadSchema = looseObject({
+  mode: z.string().optional(),
+  phase: z.string().optional(),
+  phaseStartedAt: z.number().optional(),
+  phaseEndsAt: z.number().optional(),
 });
 
 export const tasksSnapshotPayloadSchema = looseObject({
@@ -1020,6 +1090,12 @@ export const bossRotationUpdatePayloadSchema = looseObject({
   serverTime: z.string().optional(),
 });
 
+export const bosstiaryUpdatePayloadSchema = looseObject({
+  bossId: z.number().optional(),
+  killCount: z.number().optional(),
+  bossPoints: z.number().optional(),
+});
+
 export const partyActionResultPayloadSchema = strictObject({
   action: z.string().optional(),
   success: z.boolean().optional(),
@@ -1082,10 +1158,13 @@ export const receivePayloadSchemas = {
   [ReceiveMessageTypes.GOLD_TRANSFER_RESULT]: goldTransferResultPayloadSchema,
   [ReceiveMessageTypes.GOLD_BALANCE]: goldBalancePayloadSchema,
   [ReceiveMessageTypes.BLESS_SNAPSHOT]: blessSnapshotSchema,
+  [ReceiveMessageTypes.BLESS_ACTION_RESULT]: actionResultPayloadSchema,
+  [ReceiveMessageTypes.PLAYER_DEATH]: playerDeathPayloadSchema,
   [ReceiveMessageTypes.CHAT_MESSAGE]: chatMessagePayloadSchema,
   [ReceiveMessageTypes.SYSTEM_MESSAGE]: systemMessagePayloadSchema,
   [ReceiveMessageTypes.HUNT_BOOTSTRAP]: huntBootstrapSchema,
   [ReceiveMessageTypes.HUNT_UPDATE_PLAYERS]: huntUpdatePlayersPayloadSchema,
+  [ReceiveMessageTypes.HUNT_PHASE_UPDATE]: huntPhaseUpdatePayloadSchema,
   [ReceiveMessageTypes.HUNT_FINISHED]: huntFinishedPayloadSchema,
   [ReceiveMessageTypes.HUNT_UPDATE_LURE]: huntUpdateLurePayloadSchema,
   [ReceiveMessageTypes.MARKET_SNAPSHOT]: marketSnapshotSchema,
@@ -1104,6 +1183,7 @@ export const receivePayloadSchemas = {
   [ReceiveMessageTypes.DEPOT_PATCH]: depotPatchPayloadSchema,
   [ReceiveMessageTypes.HOUSE_PUBLIC_SNAPSHOT]: housePublicSnapshotReceivePayloadSchema,
   [ReceiveMessageTypes.BOSS_ROTATION_UPDATE]: bossRotationUpdatePayloadSchema,
+  [ReceiveMessageTypes.BOSSTIARY_UPDATE]: bosstiaryUpdatePayloadSchema,
 } as const satisfies Record<ReceiveMessageType, z.ZodType>;
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1215,7 @@ export type ProtocolHunt = z.infer<typeof protocolHuntSchema>;
 export type HuntBootstrapPayload = z.infer<typeof huntBootstrapSchema>;
 export type HuntUpdateLurePayload = z.infer<typeof huntUpdateLurePayloadSchema>;
 export type HuntUpdatePlayersPayload = z.infer<typeof huntUpdatePlayersPayloadSchema>;
+export type HuntPhaseUpdatePayload = z.infer<typeof huntPhaseUpdatePayloadSchema>;
 export type TasksSnapshotPayload = z.infer<typeof tasksSnapshotPayloadSchema>;
 export type QuestActionResultPayload = z.infer<typeof questActionResultPayloadSchema>;
 export type ActionResultPayload = z.infer<typeof actionResultPayloadSchema>;
@@ -1178,6 +1259,8 @@ export type FriendRequest = z.infer<typeof friendRequestSchema>;
 export type FriendsSnapshotPayload = z.infer<typeof friendsSnapshotSchema>;
 export type Blessing = z.infer<typeof blessingSchema>;
 export type BlessSnapshotPayload = z.infer<typeof blessSnapshotSchema>;
+export type BlessBuyPayload = z.infer<typeof blessBuyPayloadSchema>;
+export type PlayerDeathPayload = z.infer<typeof playerDeathPayloadSchema>;
 
 /** Game client auth frame (matches stonegy-online.com WebSocket handshake). */
 export type AuthPayload = z.infer<typeof authPayloadSchema>;
@@ -1195,6 +1278,10 @@ export type HuntChangePartyPositionPayload = z.infer<typeof huntChangePartyPosit
 export type HuntLureIdPayload = z.infer<typeof huntLureIdPayloadSchema>;
 export type QuickSellItemsPayload = z.infer<typeof quickSellItemsPayloadSchema>;
 export type QuickSellSetPreferencesPayload = z.infer<typeof quickSellSetPreferencesPayloadSchema>;
+export type SelectArrowPayload = z.infer<typeof selectArrowPayloadSchema>;
+export type SelectHealPayload = z.infer<typeof selectHealPayloadSchema>;
+export type SelectManaPotionPayload = z.infer<typeof selectManaPotionPayloadSchema>;
+export type SelectSkillsPayload = z.infer<typeof selectSkillsPayloadSchema>;
 export type NpcBuyItemPayload = z.infer<typeof npcBuyItemPayloadSchema>;
 export type NpcItemShopPurchaseResultPayload = z.infer<typeof npcItemShopPurchaseResultPayloadSchema>;
 export type AppearanceShopBuyPayload = z.infer<typeof appearanceShopBuyPayloadSchema>;
@@ -1210,6 +1297,7 @@ export type HousePublicSnapshotReceivePayload = z.infer<
 >;
 export type BossIdPayload = z.infer<typeof bossIdPayloadSchema>;
 export type BossRotationUpdatePayload = z.infer<typeof bossRotationUpdatePayloadSchema>;
+export type BosstiaryUpdatePayload = z.infer<typeof bosstiaryUpdatePayloadSchema>;
 export type MarketGetSnapshotPayload = z.infer<typeof marketGetSnapshotPayloadSchema>;
 export type MarketCreateOrderPayload = z.infer<typeof marketCreateOrderPayloadSchema>;
 export type MarketResolveOrderPayload = z.infer<typeof marketResolveOrderPayloadSchema>;
@@ -1309,26 +1397,34 @@ export const huntEntitySpawnBodySchema = looseObject({
 });
 export type HuntEntitySpawnBody = z.infer<typeof huntEntitySpawnBodySchema>;
 
-export const groundLootDropEntrySchema = strictObject({
+export const monsterLootDropEntrySchema = strictObject({
   groundUuid: z.string(),
   itemId: z.number(),
   amount: z.number(),
+  /** Same layout as inventory snapshot flagsA (high word = remaining charge/duration). */
+  flagsA: z.number(),
+  flagsB: z.number(),
+  remainingUnits: z.number(),
 });
-export type GroundLootDropEntry = z.infer<typeof groundLootDropEntrySchema>;
+export type MonsterLootDropEntry = z.infer<typeof monsterLootDropEntrySchema>;
 
-export const groundLootBodySchema = strictObject({
+export const monsterLootBodySchema = strictObject({
   subType: z.literal(1),
   totalLootValue: z.number(),
   dropCount: z.number(),
-  drops: z.array(groundLootDropEntrySchema),
+  drops: z.array(monsterLootDropEntrySchema),
 });
-export type GroundLootBody = z.infer<typeof groundLootBodySchema>;
+export type MonsterLootBody = z.infer<typeof monsterLootBodySchema>;
 
 export const itemGrantBodySchema = strictObject({
   subType: z.literal(0),
+  // Same item fields as a single monster_loot drop entry.
   groundUuid: z.string(),
   itemId: z.number(),
   amount: z.number(),
+  flagsA: z.number(),
+  flagsB: z.number(),
+  remainingUnits: z.number(),
 });
 export type ItemGrantBody = z.infer<typeof itemGrantBodySchema>;
 
@@ -1340,7 +1436,7 @@ export const entityUuidListBodySchema = strictObject({
 export type EntityUuidListBody = z.infer<typeof entityUuidListBodySchema>;
 
 export const decodedHuntFrameBodySchema = z.discriminatedUnion("kind", [
-  strictObject({ kind: z.literal("ground_loot"), data: groundLootBodySchema }),
+  strictObject({ kind: z.literal("monster_loot"), data: monsterLootBodySchema }),
   strictObject({ kind: z.literal("item_grant"), data: itemGrantBodySchema }),
   strictObject({ kind: z.literal("entity_uuid_list"), data: entityUuidListBodySchema }),
 ]);
@@ -1452,12 +1548,19 @@ export const binaryInventoryItemEntrySchema = looseObject({
   flagsA: z.number(),
   flagsB: z.number(),
   remainingUnits: z.number(),
+  meta: z.number().optional(),
+  suffix: z.number().optional(),
 });
 
 export const groundItemUpdateBodySchema = looseObject({
   entityRef: entityRefSchema,
   subType: z.number(),
   count: z.number(),
+  header: z.array(z.number()).optional(),
+  items: z.array(binaryInventoryItemEntrySchema).optional(),
+  appearance: z.array(z.number()).optional(),
+  relatedEntityRef: entityRefSchema.optional(),
+  extra: z.number().optional(),
   item: binaryInventoryItemEntrySchema.optional(),
 });
 export type GroundItemUpdateBody = z.infer<typeof groundItemUpdateBodySchema>;

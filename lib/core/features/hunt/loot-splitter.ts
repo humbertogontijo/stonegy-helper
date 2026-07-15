@@ -19,7 +19,8 @@ export type LootSplitSkipReason =
   | "solo_party"
   | "no_splitter"
   | "nothing_to_split"
-  | "insufficient_gold";
+  | "insufficient_gold"
+  | "members_owe_leader";
 
 export interface LootSplitResult {
   ok: boolean;
@@ -55,6 +56,11 @@ export function collectLeaderTransfers(
   return members.filter((member) => !member.isLeader && member.transferFromLeaderGold > 0);
 }
 
+/** True when a non-leader still owes gold to the leader (not automated yet). */
+export function hasMembersOwingLeader(members: PartyLootSplitterMember[]): boolean {
+  return members.some((member) => !member.isLeader && member.owedToLeaderGold > 0);
+}
+
 export function totalSplitTransferGold(members: PartyLootSplitterMember[]): number {
   return collectLeaderTransfers(members).reduce(
     (sum, member) => sum + member.transferFromLeaderGold,
@@ -76,6 +82,9 @@ export function shouldExecuteLootSplit(
   }
   if (!splitter) {
     return "no_splitter";
+  }
+  if (hasMembersOwingLeader(splitter.splitter.members)) {
+    return "members_owe_leader";
   }
 
   const completedByPlayerId = getEffectiveLootSplitCompleted(party);
@@ -151,7 +160,6 @@ export async function executeLootSplit(
         requestId,
       },
       {
-        goldTransferRequestId: requestId,
         cooldownMs: featureCooldown("loot.lootSplit"),
       }
     );
@@ -222,6 +230,8 @@ export async function splitLootNow(session: GameSession): Promise<SplitLootNowRe
       not_leader: "Only the party leader can split loot.",
       solo_party: "Loot split requires a party with 2+ members.",
       no_splitter: "No loot split data in party state.",
+      members_owe_leader:
+        "Loot split skipped — members still owe the leader (only leader transfers are automated).",
     };
     const error = errorByReason[skipReason] ?? "Loot split skipped.";
     updatePlayerState(session, "idling", error);

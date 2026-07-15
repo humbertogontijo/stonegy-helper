@@ -22,6 +22,8 @@ export interface SubFeatureEntry {
   order?: number;
   badge?: SubFeatureBadge;
   toggle?: SubFeatureToggle;
+  /** Optional control rendered before the primary header action (e.g. refresh). */
+  leadingAction?: ReactNode;
   /** Header "now" action when this sub-feature is open. */
   action?: SubFeatureAction;
   locked?: boolean;

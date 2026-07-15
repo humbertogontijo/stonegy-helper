@@ -1,5 +1,6 @@
 import type { Settings } from "../settings";
-import type { FeatureId } from "./types";
+import type { FeatureId } from "../services/types";
+import { FEATURES } from "./instances";
 
 export type SettingsPatch = Partial<Settings>;
 
@@ -51,4 +52,21 @@ export function defaultFeatureMasters(): Record<FeatureId, boolean> {
     tasks: false,
     tools: false,
   };
+}
+
+/** Whether `featureId` may be armed given the current (or proposed) master map. */
+export function canArmFeature(
+  featureId: FeatureId,
+  masters: Record<FeatureId, boolean>
+): { ok: true } | { ok: false; error: string } {
+  const feature = FEATURES[featureId];
+  for (const dep of feature.dependsOn) {
+    if (!masters[dep]) {
+      return {
+        ok: false,
+        error: `Arm ${FEATURES[dep].label} first — ${feature.label} depends on it.`,
+      };
+    }
+  }
+  return { ok: true };
 }

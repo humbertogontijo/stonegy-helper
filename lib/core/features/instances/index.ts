@@ -1,4 +1,5 @@
-import type { Feature, FeatureId, SubFeature } from "../types";
+import type { Feature, SubFeature } from "../types";
+import type { FeatureId } from "../../services/types";
 import { marketFeature } from "./market";
 import { lootFeature } from "./loot";
 import { battleFeature } from "./battle";

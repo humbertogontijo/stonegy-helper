@@ -10,6 +10,7 @@ import {
   countForDirection,
   emptyDebugTelemetry,
   lastByTypeKey,
+  recordDebugCommand,
   recordDebugWireMessage,
   recordFlowTrace,
   sanitizeDebugTelemetry,
@@ -30,6 +31,55 @@ describe("message payload schemas", () => {
     expect(isKnownMessageType("update_levelinfo", "receive")).toBe(true);
     expect(isKnownMessageType("update_levelinfo", "send")).toBe(false);
     expect(isKnownMessageType("equipment:patch", "receive")).toBe(true);
+  });
+
+  it("accepts bless_buy, death_modal_ack, bless:action_result, and player_death", () => {
+    expect(isKnownMessageType("bless_buy", "send")).toBe(true);
+    expect(isKnownMessageType("death_modal_ack", "send")).toBe(true);
+    expect(isKnownMessageType("bless:action_result", "receive")).toBe(true);
+    expect(isKnownMessageType("player_death", "receive")).toBe(true);
+
+    expect(validateMessagePayload("bless_buy", "send", { blessingId: 8 }).status).toBe("valid");
+    expect(validateMessagePayload("death_modal_ack", "send", {}).status).toBe("valid");
+    expect(
+      validateMessagePayload("bless:action_result", "receive", {
+        action: "buy",
+        success: true,
+        message: "Blood of the Mountain adquirida.",
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("player_death", "receive", {
+        expLost: 4652655,
+        levelBefore: 196,
+        levelAfter: 194,
+        itemsDeathLost: [],
+        blessingsBeforeDeathCount: 0,
+        hadAolEquipped: false,
+        aolConsumed: false,
+        mode: "hunt",
+        deathAt: "2026-07-15T00:15:27.985Z",
+        killedByMonsterId: 215,
+      }).status
+    ).toBe("valid");
+  });
+
+  it("allows market_create_order without tier and quest_claim_reward string choice ids", () => {
+    expect(
+      validateMessagePayload("market_create_order", "send", {
+        itemId: 883,
+        eachPrice: 2499,
+        itemAmount: 45,
+        isBuyOrder: false,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("quest_claim_reward", "send", {
+        questId: 12,
+        missionId: 1,
+        selectedChoiceId: "justice-seeker",
+      }).status
+    ).toBe("valid");
   });
 
   it("validates equipment patch payloads", () => {
@@ -477,6 +527,24 @@ describe("message payload schemas", () => {
     ).toBe("valid");
   });
 
+  it("accepts bosstiary and hunt phase update receive types from live traffic", () => {
+    expect(
+      validateMessagePayload("bosstiary:update", "receive", {
+        bossId: 22,
+        killCount: 2,
+        bossPoints: 0,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("hunt:phase_update", "receive", {
+        mode: "boss",
+        phase: "victory_outro",
+        phaseStartedAt: 1784134744256,
+        phaseEndsAt: 1784134746256,
+      }).status
+    ).toBe("valid");
+  });
+
   it("accepts weapon mastery select-perk send and action-result receive types", () => {
     expect(
       validateMessagePayload("weapon_mastery_select_perk", "send", {
@@ -494,44 +562,42 @@ describe("message payload schemas", () => {
     ).toBe("valid");
   });
 
-  it("accepts update_battle_config without auto-finish flags on send", () => {
-    const result = validateMessagePayload("update_battle_config", "send", {
-      selectedHeal: "Light Healing",
-      selectedHealPercent: 90,
-      selectedHealSecondary: "Intense Healing",
-      selectedHealPercentSecondary: 80,
-      selectedHealTertiary: "Heal Friend",
-      selectedHealPercentTertiary: 70,
-      selectedHealQuaternary: "",
-      selectedHealPercentQuaternary: 80,
-      selectedManaPotion: "Ultimate Mana Potion",
-      selectedManaPotionPercent: 60,
-      selectedArrow: "Onyx Arrow",
-      selectedSkills: ["Wrath of Nature"],
-      selectedSkillsMinCreatures: { "Wrath of Nature": 5 },
-      selectedSupportSkill: null,
-      selectedSupportSkills: [null, "Magic Shield"],
-      autoEquip: {
-        ring: {
-          enabled: true,
-          emergencyItemId: "705",
-          defaultItemId: "239",
-          equipLifePercentLte: 99,
-          restoreLifePercentGte: 100,
+  it("accepts select_* preset requests from live traffic", () => {
+    expect(
+      validateMessagePayload("select_arrow", "send", {
+        selectedArrow: "Diamond Arrow",
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("select_heal", "send", {
+        selectedHeal: "Light Healing",
+        selectedHealPercent: 90,
+        healIdx: 4,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("select_mana_potion", "send", {
+        selectedManaPotionPercent: 75,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("select_skills", "send", {
+        selectedSkills: [
+          "Divine Caldera",
+          "Great Fireball Rune",
+          "Strong Ethereal Spear",
+          "Ethereal Spear",
+        ],
+        selectedSupportSkill: null,
+        selectedSupportSkills: [null, null],
+        selectedSkillsMinCreatures: {
+          "Divine Caldera": 2,
+          "Great Fireball Rune": 2,
+          "Strong Ethereal Spear": -1,
+          "Ethereal Spear": -1,
         },
-        neck: {
-          enabled: false,
-          emergencyItemId: null,
-          defaultItemId: null,
-          equipLifePercentLte: 50,
-          restoreLifePercentGte: 80,
-        },
-      },
-      quickSellDeselectedItemIds: [3, 58],
-      homeMapPreference: "default",
-      lootFilterExcludedItemIds: [],
-    });
-    expect(result.status).toBe("valid");
+      }).status
+    ).toBe("valid");
   });
 });
 
@@ -874,8 +940,51 @@ describe("debug-telemetry", () => {
     expect(snapshot.countsByType).toEqual({});
     expect(snapshot.unknownEvents).toHaveLength(0);
     expect(snapshot.schemaMismatchEvents).toHaveLength(0);
+    expect(snapshot.lastCommands).toHaveLength(0);
     expect(snapshot.flowTraces).toHaveLength(0);
     expect(snapshot.activeFlows).toHaveLength(0);
+  });
+
+  it("records last commands with sent and response payloads", () => {
+    const snapshot = emptyDebugTelemetry();
+    recordDebugCommand(snapshot, {
+      at: 10,
+      finishedAt: 40,
+      commandId: "party_get_snapshot",
+      expectedResponseType: "party:snapshot",
+      sent: { type: "party_get_snapshot", data: {} },
+      response: { type: "party:snapshot", data: { meId: "1" } },
+      status: "ok",
+      success: true,
+      attempt: 1,
+    });
+    recordDebugCommand(snapshot, {
+      at: 50,
+      finishedAt: 250,
+      commandId: "quest_get_snapshot",
+      expectedResponseType: "tasks_snapshot",
+      sent: { type: "quest_get_snapshot", data: {} },
+      status: "timeout",
+      success: false,
+      errorMessage: "Timed out waiting for tasks_snapshot (quest_get_snapshot)",
+      attempt: 1,
+    });
+
+    expect(snapshot.lastCommands).toHaveLength(2);
+    expect(snapshot.lastCommands[0]?.commandId).toBe("quest_get_snapshot");
+    expect(snapshot.lastCommands[0]?.status).toBe("timeout");
+    expect(snapshot.lastCommands[0]?.response).toBeUndefined();
+    expect(snapshot.lastCommands[1]?.sent).toEqual({
+      type: "party_get_snapshot",
+      data: {},
+    });
+    expect(snapshot.lastCommands[1]?.response).toEqual({
+      type: "party:snapshot",
+      data: { meId: "1" },
+    });
+
+    clearDebugTelemetry(snapshot);
+    expect(snapshot.lastCommands).toHaveLength(0);
   });
 
   it("records and clears flow traces", () => {

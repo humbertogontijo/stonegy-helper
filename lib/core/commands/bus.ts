@@ -4,18 +4,16 @@ import {
   delay,
   RESPONSE_TIMEOUT_MS,
 } from "./cooldown";
-import { buildMessage, getResponseTypeForSend } from "../../protocol";
+import {
+  buildMessage,
+  formatResponseTypesForSend,
+  getResponseTypesForSend,
+  matchResponse,
+} from "../../protocol";
 import type { SendMessageType, SendPayloadMap, StonegyMessage } from "../../protocol";
 import type { SessionView } from "../projections/types";
 import type { Transport } from "../transport";
-import {
-  isActionResultSuccess,
-  matchesCommandResponse,
-  matchesGoldTransferResponse,
-  matchesMarketSnapshot,
-  readActionResultMessage,
-  type MarketCommandContext,
-} from "./registry";
+import { isActionResultSuccess, readActionResultMessage } from "./registry";
 
 /** Extra attempts after a response timeout (1 → 2 total tries). */
 export const DEFAULT_COMMAND_TIMEOUT_RETRIES = 1;
@@ -34,8 +32,6 @@ export interface CommandRunOptions {
   force?: boolean;
   waitForResponse?: boolean;
   timeoutMs?: number;
-  marketContext?: MarketCommandContext;
-  goldTransferRequestId?: string;
   /** Override the default COMMAND_COOLDOWNS entry for this send. */
   cooldownMs?: number;
   /**
@@ -43,6 +39,26 @@ export interface CommandRunOptions {
    * Defaults to {@link DEFAULT_COMMAND_TIMEOUT_RETRIES}. Use `0` to disable.
    */
   retries?: number;
+}
+
+export type CommandDebugStatus = "ok" | "failed" | "timeout" | "sent" | "error";
+
+/** Debug telemetry hook fired after each send attempt settles. */
+export interface CommandDebugRecord {
+  at: number;
+  finishedAt: number;
+  commandId: string;
+  expectedResponseType?: string;
+  sent: { type: string; data?: unknown };
+  response?: StonegyMessage;
+  status: CommandDebugStatus;
+  success?: boolean;
+  errorMessage?: string;
+  attempt: number;
+}
+
+export interface CommandBusOptions {
+  onCommandComplete?: (record: CommandDebugRecord) => void;
 }
 
 interface PendingWaiter {
@@ -57,25 +73,50 @@ function isTimeoutErrorMessage(message: string | undefined): boolean {
   return typeof message === "string" && message.includes("Timed out waiting for");
 }
 
+function statusForOutcome(
+  outcome: CommandOutcome,
+  waitedForResponse: boolean
+): CommandDebugStatus {
+  if (!outcome.sent) {
+    return "error";
+  }
+  if (isTimeoutErrorMessage(outcome.errorMessage)) {
+    return "timeout";
+  }
+  if (!waitedForResponse) {
+    return "sent";
+  }
+  if (outcome.success === true) {
+    return "ok";
+  }
+  return "failed";
+}
+
 export class CommandBus {
   /** Serializes wire sends only; response waits run independently. */
   private sendChain = Promise.resolve();
   private cooldowns = new Map<string, number>();
   private pending: PendingWaiter[] = [];
+  private onCommandComplete?: (record: CommandDebugRecord) => void;
 
   constructor(
     private transport: Transport,
-    private getView: () => SessionView
-  ) {}
+    private getView: () => SessionView,
+    options: CommandBusOptions = {}
+  ) {
+    this.onCommandComplete = options.onCommandComplete;
+  }
 
   notifyResponse(message: StonegyMessage, view: SessionView): void {
-    for (let index = this.pending.length - 1; index >= 0; index -= 1) {
+    // Oldest matching waiter only — concurrent waits must not all settle on one message.
+    for (let index = 0; index < this.pending.length; index += 1) {
       const entry = this.pending[index];
       if (!entry.match(message, view)) {
         continue;
       }
       this.pending.splice(index, 1);
       entry.resolve(message);
+      return;
     }
   }
 
@@ -91,7 +132,7 @@ export class CommandBus {
     return this.enqueueSend(() => this.transport.send(1, json));
   }
 
-  private enqueueSend(send: () => Promise<void>): Promise<void> {
+  private enqueueSend<T>(send: () => Promise<T>): Promise<T> {
     const result = this.sendChain.then(send);
     this.sendChain = result.then(
       () => undefined,
@@ -118,7 +159,7 @@ export class CommandBus {
         ...options,
         // Already waited on the first attempt; don't stack cooldowns between retries.
         force: options.force || attempt > 0,
-      });
+      }, attempt + 1);
       if (!isTimeoutErrorMessage(last.errorMessage)) {
         return last;
       }
@@ -130,74 +171,91 @@ export class CommandBus {
   private async executeAttempt<T extends SendMessageType>(
     type: T,
     data: SendPayloadMap[T],
-    options: CommandRunOptions
+    options: CommandRunOptions,
+    attempt: number
   ): Promise<CommandOutcome> {
     const cooldownMs = options.cooldownMs ?? resolveCommandCooldown(type);
-
-    if (!options.force && cooldownMs != null) {
-      const remaining = remainingCooldownMs(this.cooldowns.get(type), cooldownMs, Date.now());
-      if (remaining > 0) {
-        await delay(remaining);
-      }
-    }
-
+    const expectedResponseType = formatResponseTypesForSend(type) ?? undefined;
     const shouldWait =
-      options.waitForResponse !== false && getResponseTypeForSend(type) != null;
-    const waiter = shouldWait
-      ? this.armResponseWaiter(
-          type,
-          options.timeoutMs ?? RESPONSE_TIMEOUT_MS,
-          options.marketContext,
-          options.goldTransferRequestId
-        )
-      : null;
+      options.waitForResponse !== false && getResponseTypesForSend(type).length > 0;
+    const sent = { type, data };
+    const at = Date.now();
+    let outcome: CommandOutcome;
+
+    type WaiterHandle = {
+      promise: Promise<StonegyMessage>;
+      cancel: (error: Error) => void;
+    };
 
     try {
       const json = buildMessage(type, data);
-      await this.enqueueSend(() => this.transport.send(1, json));
-      this.cooldowns.set(type, Date.now());
+      // Cooldown + send share the chain so concurrent same-type runs can't both skip the wait.
+      const waiter = await this.enqueueSend(async (): Promise<WaiterHandle | null> => {
+        if (!options.force && cooldownMs != null) {
+          const remaining = remainingCooldownMs(this.cooldowns.get(type), cooldownMs, Date.now());
+          if (remaining > 0) {
+            await delay(remaining);
+          }
+        }
+        const armed = shouldWait
+          ? this.armResponseWaiter(sent, options.timeoutMs ?? RESPONSE_TIMEOUT_MS)
+          : null;
+        await this.transport.send(1, json);
+        this.cooldowns.set(type, Date.now());
+        return armed;
+      });
 
       if (!waiter) {
-        return { sent: true };
-      }
-
-      try {
-        const response = await waiter.promise;
-        const success = isActionResultSuccess(response);
-        return {
-          sent: true,
-          response,
-          success,
-          errorMessage: success ? undefined : readActionResultMessage(response) ?? "Command failed",
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { sent: true, success: false, errorMessage: message };
+        outcome = { sent: true };
+      } else {
+        try {
+          const response = await waiter.promise;
+          const success = isActionResultSuccess(response);
+          outcome = {
+            sent: true,
+            response,
+            success,
+            errorMessage: success
+              ? undefined
+              : readActionResultMessage(response) ?? "Command failed",
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          outcome = { sent: true, success: false, errorMessage: message };
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (waiter) {
-        // Nobody awaits waiter.promise on this path — attach a sink before rejecting.
-        void waiter.promise.catch(() => undefined);
-        waiter.cancel(error instanceof Error ? error : new Error(message));
-      }
-      return { sent: false, success: false, errorMessage: message };
+      outcome = { sent: false, success: false, errorMessage: message };
     }
+
+    this.onCommandComplete?.({
+      at,
+      finishedAt: Date.now(),
+      commandId: type,
+      expectedResponseType,
+      sent,
+      response: outcome.response,
+      status: statusForOutcome(outcome, shouldWait),
+      success: outcome.success,
+      errorMessage: outcome.errorMessage,
+      attempt,
+    });
+
+    return outcome;
   }
 
   private armResponseWaiter(
-    commandId: string,
-    timeoutMs: number,
-    marketContext?: MarketCommandContext,
-    goldTransferRequestId?: string
+    request: { type: string; data?: unknown },
+    timeoutMs: number
   ): {
     promise: Promise<StonegyMessage>;
     cancel: (error: Error) => void;
   } {
+    const commandId = request.type;
     const viewAtSend = this.getView();
     const partyBaseline = viewAtSend.party.lastSnapshotAt ?? 0;
     const questBaseline = viewAtSend.market.lastQuestSnapshotAt ?? 0;
-    const huntBaseline = viewAtSend.hunt.activeHuntId;
 
     let settled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -224,18 +282,11 @@ export class CommandBus {
       entry = {
         commandId,
         match: (message, view) => {
-          if (commandId === "market_get_snapshot" && marketContext) {
-            return matchesMarketSnapshot(message, marketContext);
-          }
-
-          if (commandId === "gold_transfer" && goldTransferRequestId) {
-            return matchesGoldTransferResponse(message, goldTransferRequestId);
-          }
-
-          if (!matchesCommandResponse(commandId, message)) {
+          if (!matchResponse(request, message)) {
             return false;
           }
 
+          // View freshness gates — not request/response correlation.
           if (commandId === "party_get_snapshot") {
             return (
               view.party.partySnapshotSynced &&
@@ -245,16 +296,6 @@ export class CommandBus {
 
           if (commandId === "quest_get_snapshot") {
             return (view.market.lastQuestSnapshotAt ?? 0) > questBaseline;
-          }
-
-          if (commandId === "start_hunt") {
-            return view.hunt.activeHuntId != null && view.hunt.activeHuntId !== huntBaseline;
-          }
-
-          // Response type is already gold_balance; don't also require a gold delta —
-          // some sells only refresh gold via inventory_snapshot and would time out.
-          if (commandId === "quick_sell_items") {
-            return true;
           }
 
           return true;
@@ -278,7 +319,7 @@ export class CommandBus {
       timeoutId = setTimeout(() => {
         settleReject(
           new Error(
-            `Timed out waiting for ${getResponseTypeForSend(commandId) ?? "response"} (${commandId})`
+            `Timed out waiting for ${formatResponseTypesForSend(commandId) ?? "response"} (${commandId})`
           )
         );
       }, timeoutMs);

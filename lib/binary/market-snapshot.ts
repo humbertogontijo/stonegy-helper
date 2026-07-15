@@ -1,4 +1,4 @@
-import type { MarketSnapshotData } from "../market/types";
+import type { MarketSnapshotData } from "../protocol-messages";
 import type { BinaryReader } from "./reader.ts";
 import type { BinaryMarketOrder, MarketSnapshotBody } from "./types.ts";
 

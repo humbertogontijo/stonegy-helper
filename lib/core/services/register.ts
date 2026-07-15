@@ -34,7 +34,7 @@ export function registerDefaultServices(registry: ServiceRegistry): void {
   registry.registerDomain(tasksState);
 
   const market = new MarketService(ctx, marketState, inventory, session, party, hunt);
-  const battle = new BattleService(ctx, hunt, party, session, inventory);
+  const battle = new BattleService(ctx, hunt, party, session);
   const huntSvc = new HuntService(ctx, hunt, party, session, battle);
   const loot = new LootService(ctx, inventory, marketState, hunt, party, session, market, battle);
   const tasks = new TasksService(ctx, tasksState, session, party, huntSvc, battle);

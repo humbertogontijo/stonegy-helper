@@ -39,6 +39,13 @@ import type {
   MarketSnapshotBody,
   SpeechBody,
 } from "./types.ts";
+import type {
+  EntityUuidListBody,
+  GoldBalanceBody,
+  GroundItemUpdateBody,
+  MonsterLootBody,
+  ItemGrantBody,
+} from "../protocol-messages.ts";
 
 export function decodeBinaryMessage(input: Uint8Array | string): DecodedBinaryMessage {
   try {
@@ -267,8 +274,6 @@ function decodeSpeech(reader: BinaryReader): SpeechBody {
   return { channel, mode, text };
 }
 
-export { decodeInventorySnapshot } from "./inventory-snapshot.ts";
-
 export function isInventorySnapshot(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
   body: { kind: "inventory_snapshot"; data: InventorySnapshotBody };
 } {
@@ -281,26 +286,32 @@ export function isMarketSnapshot(message: DecodedBinaryMessage): message is Deco
   return message.body.kind === "market_snapshot";
 }
 
-export function isGroundLoot(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
-  body: { kind: "ground_loot"; data: import("./types.ts").GroundLootBody };
+export function isMonsterLoot(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "monster_loot"; data: MonsterLootBody };
 } {
-  return message.body.kind === "ground_loot";
+  return message.body.kind === "monster_loot";
 }
 
 export function isItemGrant(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
-  body: { kind: "item_grant"; data: import("./types.ts").ItemGrantBody };
+  body: { kind: "item_grant"; data: ItemGrantBody };
 } {
   return message.body.kind === "item_grant";
 }
 
+export function isGroundItemUpdate(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "ground_item_update"; data: GroundItemUpdateBody };
+} {
+  return message.body.kind === "ground_item_update";
+}
+
 export function isGoldBalance(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
-  body: { kind: "gold_balance"; data: import("./types.ts").GoldBalanceBody };
+  body: { kind: "gold_balance"; data: GoldBalanceBody };
 } {
   return message.body.kind === "gold_balance";
 }
 
 export function isEntityUuidList(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
-  body: { kind: "entity_uuid_list"; data: import("./types.ts").EntityUuidListBody };
+  body: { kind: "entity_uuid_list"; data: EntityUuidListBody };
 } {
   return message.body.kind === "entity_uuid_list";
 }
@@ -321,9 +332,9 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
       return `entity_update(sub=${message.body.data.subType}, refs=${message.body.data.entityRefs.length})`;
     case "vital_delta":
       return `vital(target=${message.body.data.targetIndex}, delta=${message.body.data.delta})`;
-    case "ground_loot": {
+    case "monster_loot": {
       const { totalLootValue, drops } = message.body.data;
-      return `ground_loot(${drops.length} drops, total=${totalLootValue})`;
+      return `monster_loot(${drops.length} drops, total=${totalLootValue})`;
     }
     case "item_grant": {
       const { itemId, amount } = message.body.data;
@@ -373,8 +384,17 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
     }
     case "support_ability_cast":
       return `support_ability(${message.body.data.strings.join(" / ")})`;
-    case "ground_item_update":
-      return `ground_item(sub=${message.body.data.subType}, count=${message.body.data.count})`;
+    case "ground_item_update": {
+      const { subType, count, items, extra } = message.body.data;
+      const itemSuffix = items?.length
+        ? `, items=${items.length} [${items
+            .slice(0, 3)
+            .map((item) => `${item.itemId}x${item.amount}`)
+            .join(", ")}${items.length > 3 ? ", …" : ""}]`
+        : "";
+      const extraSuffix = extra != null ? `, extra=${extra}` : "";
+      return `ground_item(sub=${subType}, count=${count}${itemSuffix}${extraSuffix})`;
+    }
     case "entity_move": {
       const { name, delta, moveKind, state } = message.body.data;
       return `entity_move(${name}, delta=${delta}, kind=${moveKind}, state=${state})`;

@@ -1,15 +1,12 @@
 import { DEFAULT_HUNT_SKILLS } from "./protocol";
-import type { BattleConfigPayload } from "./protocol-messages";
-import type { AutoEquipSlot, BattlePreset, BotState } from "./types";
-
-export {
-  getAmmoOptions,
-  getAttackSpellOptions,
-  getHealOptions,
-  getManaPotionOptions,
-  getSupportSpellOptions,
-  resolveBattleOptionFilter,
-} from "./battle-options";
+import type {
+  BattleConfigPayload,
+  SelectArrowPayload,
+  SelectHealPayload,
+  SelectManaPotionPayload,
+  SelectSkillsPayload,
+} from "./protocol-messages";
+import type { AutoEquipSlot, BattlePreset } from "./types";
 
 export const EQUIP_ITEM_OPTIONS = [
   "",
@@ -191,13 +188,44 @@ export function resolveHuntSkills(preset?: BattlePreset | null): Array<string | 
   return [...DEFAULT_HUNT_SKILLS];
 }
 
-export function buildBattleConfigPayload(
-  preset: BattlePreset,
-  sellOptions?: {
-    quickSellDeselectedItemIds?: number[];
-    lootFilterExcludedItemIds?: number[];
-  }
-): BattleConfigPayload {
+/** Heal slots sent via `select_heal` (1-based healIdx). */
+export function buildSelectHealPayloads(preset: BattlePreset): SelectHealPayload[] {
+  return [
+    {
+      selectedHeal: preset.selectedHeal,
+      selectedHealPercent: preset.selectedHealPercent,
+      healIdx: 1,
+    },
+    {
+      selectedHeal: preset.selectedHealSecondary,
+      selectedHealPercent: preset.selectedHealPercentSecondary,
+      healIdx: 2,
+    },
+    {
+      selectedHeal: preset.selectedHealTertiary,
+      selectedHealPercent: preset.selectedHealPercentTertiary,
+      healIdx: 3,
+    },
+    {
+      selectedHeal: preset.selectedHealQuaternary,
+      selectedHealPercent: preset.selectedHealPercentQuaternary,
+      healIdx: 4,
+    },
+  ];
+}
+
+export function buildSelectArrowPayload(preset: BattlePreset): SelectArrowPayload {
+  return { selectedArrow: preset.selectedArrow };
+}
+
+export function buildSelectManaPotionPayload(preset: BattlePreset): SelectManaPotionPayload {
+  return {
+    selectedManaPotion: preset.selectedManaPotion,
+    selectedManaPotionPercent: preset.selectedManaPotionPercent,
+  };
+}
+
+export function buildSelectSkillsPayload(preset: BattlePreset): SelectSkillsPayload {
   const skills = preset.selectedSkills;
   const minCreatures = { ...preset.selectedSkillsMinCreatures };
 
@@ -208,62 +236,58 @@ export function buildBattleConfigPayload(
   }
 
   return {
-    selectedHeal: preset.selectedHeal,
-    selectedHealPercent: preset.selectedHealPercent,
-    selectedHealSecondary: preset.selectedHealSecondary,
-    selectedHealPercentSecondary: preset.selectedHealPercentSecondary,
-    selectedHealTertiary: preset.selectedHealTertiary,
-    selectedHealPercentTertiary: preset.selectedHealPercentTertiary,
-    selectedHealQuaternary: preset.selectedHealQuaternary,
-    selectedHealPercentQuaternary: preset.selectedHealPercentQuaternary,
-    selectedManaPotion: preset.selectedManaPotion,
-    selectedManaPotionPercent: preset.selectedManaPotionPercent,
-    selectedArrow: preset.selectedArrow,
     selectedSkills: skills,
-    selectedSkillsMinCreatures: minCreatures,
     selectedSupportSkill: preset.selectedSupportSkills[0] ?? null,
     selectedSupportSkills: preset.selectedSupportSkills,
-    autoEquip: preset.autoEquip,
-    quickSellDeselectedItemIds: sellOptions?.quickSellDeselectedItemIds ?? [],
-    homeMapPreference: "default",
-    lootFilterExcludedItemIds: sellOptions?.lootFilterExcludedItemIds ?? [],
+    selectedSkillsMinCreatures: minCreatures,
   };
 }
 
-export function battleConfigPayloadEquals(
-  left: BattleConfigPayload,
-  right: BattleConfigPayload
+export function healSlotDiffers(
+  desired: BattlePreset,
+  current: BattlePreset,
+  healIdx: number
 ): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  switch (healIdx) {
+    case 1:
+      return (
+        desired.selectedHeal !== current.selectedHeal ||
+        desired.selectedHealPercent !== current.selectedHealPercent
+      );
+    case 2:
+      return (
+        desired.selectedHealSecondary !== current.selectedHealSecondary ||
+        desired.selectedHealPercentSecondary !== current.selectedHealPercentSecondary
+      );
+    case 3:
+      return (
+        desired.selectedHealTertiary !== current.selectedHealTertiary ||
+        desired.selectedHealPercentTertiary !== current.selectedHealPercentTertiary
+      );
+    case 4:
+      return (
+        desired.selectedHealQuaternary !== current.selectedHealQuaternary ||
+        desired.selectedHealPercentQuaternary !== current.selectedHealPercentQuaternary
+      );
+    default:
+      return true;
+  }
 }
 
-export function buildBattleConfigPayloadForState(
-  state: BotState,
-  getQuickSellDeselectedItemIds: (
-    huntId: number | null,
-    options: {
-      settings: {
-        lootSellModeByItemId: Record<number, string>;
-        lootSellExcludedItemIds: number[];
-        marketSellMinRarityTier: number;
-        marketSellMountItems: boolean;
-      };
-      autoSellLootEnabled: boolean;
-    }
-  ) => number[]
-): BattleConfigPayload {
-  const huntId = state.hunt.activeHuntId ?? state.settings.selectedHuntId;
-  const preset = state.battlePreset;
-  return buildBattleConfigPayload(preset, {
-    lootFilterExcludedItemIds: state.inventory.gameLootFilterExcludedItemIds ?? [],
-    quickSellDeselectedItemIds: getQuickSellDeselectedItemIds(huntId, {
-      settings: {
-        lootSellModeByItemId: state.settings.lootSellModeByItemId,
-        lootSellExcludedItemIds: state.settings.lootSellExcludedItemIds ?? [],
-        marketSellMinRarityTier: state.settings.marketSellMinRarityTier ?? 1,
-        marketSellMountItems: state.settings.marketSellMountItems ?? false,
-      },
-      autoSellLootEnabled: state.settings.autoSellLoot ?? false,
-    }),
-  });
+export function arrowDiffers(desired: BattlePreset, current: BattlePreset): boolean {
+  return desired.selectedArrow !== current.selectedArrow;
+}
+
+export function manaPotionDiffers(desired: BattlePreset, current: BattlePreset): boolean {
+  return (
+    desired.selectedManaPotion !== current.selectedManaPotion ||
+    desired.selectedManaPotionPercent !== current.selectedManaPotionPercent
+  );
+}
+
+export function skillsDiffers(desired: BattlePreset, current: BattlePreset): boolean {
+  return (
+    JSON.stringify(buildSelectSkillsPayload(desired)) !==
+    JSON.stringify(buildSelectSkillsPayload(current))
+  );
 }

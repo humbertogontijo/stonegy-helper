@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyInventoryMonsterLootDrops,
   inventoryAmountsFromItems,
   inventorySellableAmountsFromItems,
   isInventoryItemInstanceSellable,
@@ -84,5 +85,103 @@ describe("removeInventoryAmounts", () => {
         expect.objectContaining({ itemId: 14, amount: 1 }),
       ])
     );
+  });
+});
+
+describe("applyInventoryMonsterLootDrops", () => {
+  const uuidA = "019f5ea9-63a2-7bb3-81fb-b5a9a280ea27";
+  const uuidB = "019f5ea9-63a2-7bb3-81fb-b5a9a280ea28";
+
+  it("adds incremental amounts by itemId from monster_loot drops", () => {
+    const next = applyInventoryMonsterLootDrops(inventoryItemsFromAmounts({ 582: 1 }), [
+      { groundUuid: uuidA, itemId: 244, amount: 3 },
+    ]);
+
+    expect(inventoryAmountsFromItems(next)).toEqual({ 582: 1, 244: 3 });
+    expect(next.find((item) => item.itemId === 244)).toEqual({
+      uuid: uuidA,
+      itemId: 244,
+      amount: 3,
+      flagsA: 2,
+      flagsB: 0,
+      remainingUnits: 0,
+    });
+  });
+
+  it("preserves charge remainingUnits from decoded monster_loot drops", () => {
+    // Ice Rapier (58) — charge 1 encoded in flagsA high word (0x10002).
+    const next = applyInventoryMonsterLootDrops([], [
+      {
+        groundUuid: uuidA,
+        itemId: 58,
+        amount: 1,
+        flagsA: 0x10002,
+        flagsB: 0,
+        remainingUnits: 1,
+      },
+    ]);
+
+    expect(next).toEqual([
+      {
+        uuid: uuidA,
+        itemId: 58,
+        amount: 1,
+        flagsA: 0x10002,
+        flagsB: 0,
+        remainingUnits: 1,
+      },
+    ]);
+    expect(isInventoryItemInstanceSellable(next[0]!)).toBe(true);
+  });
+
+  it("accumulates amounts for the same itemId across drops", () => {
+    const base = applyInventoryMonsterLootDrops([], [
+      { groundUuid: uuidA, itemId: 244, amount: 2 },
+    ]);
+    const next = applyInventoryMonsterLootDrops(base, [
+      { groundUuid: uuidB, itemId: 244, amount: 5 },
+    ]);
+
+    expect(inventoryAmountsFromItems(next)).toEqual({ 244: 7 });
+    expect(next).toHaveLength(1);
+    expect(next[0]?.uuid).toBe(uuidA);
+  });
+
+  it("keeps separate instances when remainingUnits differ", () => {
+    const base = applyInventoryMonsterLootDrops([], [
+      {
+        groundUuid: uuidA,
+        itemId: 289,
+        amount: 1,
+        flagsA: 0xc80002,
+        flagsB: 0,
+        remainingUnits: 200,
+      },
+    ]);
+    const next = applyInventoryMonsterLootDrops(base, [
+      {
+        groundUuid: uuidB,
+        itemId: 289,
+        amount: 1,
+        flagsA: 0x960002,
+        flagsB: 0,
+        remainingUnits: 150,
+      },
+    ]);
+
+    expect(next).toHaveLength(2);
+    expect(inventoryAmountsFromItems(next)).toEqual({ 289: 2 });
+  });
+
+  it("ignores zero-amount drops", () => {
+    const base = applyInventoryMonsterLootDrops([], [
+      { groundUuid: uuidA, itemId: 244, amount: 3 },
+      { groundUuid: uuidB, itemId: 709, amount: 2 },
+    ]);
+    const next = applyInventoryMonsterLootDrops(base, [
+      { groundUuid: uuidA, itemId: 244, amount: 0 },
+    ]);
+
+    expect(inventoryAmountsFromItems(next)).toEqual({ 244: 3, 709: 2 });
   });
 });

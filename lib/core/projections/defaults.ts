@@ -30,6 +30,7 @@ export function defaultSessionView(): SessionView {
     },
     hunt: {
       activeHuntId: null,
+      activeHuntTitle: null,
       currentLureId: null,
       currentPartyTileX: null,
       currentPartyTileY: null,

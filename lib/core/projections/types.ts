@@ -63,6 +63,8 @@ export interface PartyProjection {
 
 export interface HuntProjection {
   activeHuntId: number | null;
+  /** Live title from hunt_bootstrap (includes quest room names). */
+  activeHuntTitle: string | null;
   currentLureId: number | null;
   currentPartyTileX: number | null;
   currentPartyTileY: number | null;

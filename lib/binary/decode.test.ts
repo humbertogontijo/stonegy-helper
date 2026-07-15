@@ -473,24 +473,48 @@ describe("decodeBinaryMessage", () => {
     expect(unsupportedTick.body.kind).toBe("unknown");
 
     const drops = decodeBinaryMessage(huntTrafficFixtures.huntLootItemDrops);
-    expect(drops.body.kind).toBe("ground_loot");
-    if (drops.body.kind !== "ground_loot") {
-      throw new Error("expected ground_loot body");
+    expect(drops.body.kind).toBe("monster_loot");
+    if (drops.body.kind !== "monster_loot") {
+      throw new Error("expected monster_loot body");
     }
-    expect(drops.body.data.drops).toEqual(
-      expectedHuntLootDrops.map(({ itemId, amount, groundUuid }) => ({
-        itemId,
-        amount,
-        groundUuid,
-      }))
+    expect(drops.body.data.drops).toEqual([...expectedHuntLootDrops]);
+
+    // Live capture: Small Enchanted Ruby + full-charge Ice Rapier (flagsA high word = 1).
+    const iceRapierLoot = decodeBinaryMessage(
+      "U0cFCgErfg0AAAAAAAIAJAAwMTlmNjEwYi1lOWQ4LTdiYmQtOTRkNy02ZTBmZmE1NjU5OGL0AAAAAgAAAAIAAAAAACQAMDE5ZjYxMGItZjIwZC03YmJkLTk0ZTEtN2E2ZjEyY2RhZmQxOgAAAAEAAAACAAEAAAAAAA=="
     );
+    expect(iceRapierLoot.body.kind).toBe("monster_loot");
+    if (iceRapierLoot.body.kind !== "monster_loot") {
+      throw new Error("expected monster_loot body");
+    }
+    expect(iceRapierLoot.body.data.drops).toEqual([
+      {
+        groundUuid: "019f610b-e9d8-7bbd-94d7-6e0ffa56598b",
+        itemId: 244,
+        amount: 2,
+        flagsA: 2,
+        flagsB: 0,
+        remainingUnits: 0,
+      },
+      {
+        groundUuid: "019f610b-f20d-7bbd-94e1-7a6f12cdafd1",
+        itemId: 58,
+        amount: 1,
+        flagsA: 0x10002,
+        flagsB: 0,
+        remainingUnits: 1,
+      },
+    ]);
 
     const starterGrant = decodeBinaryMessage(huntTrafficFixtures.huntLootStarterItemGrant);
     expect(starterGrant.body.kind).toBe("item_grant");
     if (starterGrant.body.kind !== "item_grant") {
       throw new Error("expected item_grant body");
     }
-    expect(starterGrant.body.data).toMatchObject(expectedHuntLootStarterItemGrant);
+    expect(starterGrant.body.data).toEqual({
+      subType: 0,
+      ...expectedHuntLootStarterItemGrant,
+    });
 
     const entityList = decodeBinaryMessage(huntTrafficFixtures.huntEntityUuidList);
     expect(entityList.body.kind).toBe("entity_uuid_list");
@@ -770,5 +794,51 @@ describe("binary decode containment", () => {
       throw new Error("expected unknown body");
     }
     expect(String(message.body.data.error)).toMatch(/version/i);
+  });
+});
+
+describe("ground_item_update", () => {
+  it("decodes short tile updates with related entity + extra", () => {
+    const winter = decodeBinaryMessage(winterCourtTrafficFixtures.groundItemUpdate);
+    expect(winter.body.kind).toBe("ground_item_update");
+    if (winter.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(winter.body.data.entityRef.hex).toBe(expectedWinterCourt.groundItemUpdate.entityRef);
+    expect(winter.body.data.subType).toBe(expectedWinterCourt.groundItemUpdate.subType);
+    expect(winter.body.data.count).toBe(expectedWinterCourt.groundItemUpdate.count);
+    expect(winter.body.data.extra).toBe(expectedWinterCourt.groundItemUpdate.extra);
+    expect(winter.body.data.items).toBeUndefined();
+    expect(summarizeBinaryMessage(winter)).toContain("extra=12000");
+
+    const short = decodeBinaryMessage(winterCourtTrafficFixtures.groundItemUpdateShortTileAlt);
+    expect(short.body.kind).toBe("ground_item_update");
+    if (short.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(short.body.data.subType).toBe(1);
+    expect(short.body.data.count).toBe(1);
+    expect(short.body.data.extra).toBe(11000);
+    expect(short.body.data.items).toBeUndefined();
+  });
+
+  it("decodes inventory slot deltas from long ground_item frames", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.groundItemUpdateInventory);
+    expect(message.body.kind).toBe("ground_item_update");
+    if (message.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+
+    const { items, count, extra } = message.body.data;
+    expect(count).toBe(expectedWinterCourt.groundItemUpdateInventory.count);
+    expect(extra).toBe(expectedWinterCourt.groundItemUpdateInventory.extra);
+    expect(items?.map((item) => item.itemId)).toEqual(
+      expectedWinterCourt.groundItemUpdateInventory.itemIds
+    );
+    expect(items?.map((item) => item.amount)).toEqual(
+      expectedWinterCourt.groundItemUpdateInventory.amounts
+    );
+    expect(summarizeBinaryMessage(message)).toContain("items=2");
+    expect(summarizeBinaryMessage(message)).toContain("125x1");
   });
 });

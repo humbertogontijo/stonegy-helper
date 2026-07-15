@@ -5,7 +5,7 @@ import {
 import type { PartyInviteAcceptMode } from "../../../../lib/core/settings";
 import { usePersistedField } from "../../hooks/usePersistedField";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";
 import { FeatureInputs } from "../ui/FeatureInputs";
 import { SplitSubFeatureDetail } from "../ui/FeatureHubNavigator";
@@ -67,6 +67,10 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
     state?.settings.keepAliveEnabled,
     true
   );
+  const [autoReconnectEnabled, setAutoReconnectEnabled] = usePersistedField(
+    state?.settings.autoReconnectEnabled,
+    false
+  );
 
   const saveTools = (overrides?: Record<string, unknown>) =>
     saveSettings({
@@ -78,6 +82,7 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
       autoTrainingSkillToTrain: autoTrainingSkillToTrain ?? "DISTANCE",
       autoTrainingIdleDelaySec: Math.max(1, Number(autoTrainingIdleDelaySec) || 5),
       keepAliveEnabled,
+      autoReconnectEnabled,
       ...overrides,
     });
 
@@ -143,6 +148,16 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
               const enabled = event.target.checked;
               setKeepAliveEnabled(enabled);
               void saveTools({ keepAliveEnabled: enabled });
+            }}
+          />
+          <StonegyToggle
+            id="auto-reconnect-enabled"
+            label="Auto reconnect"
+            checked={autoReconnectEnabled === true}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              setAutoReconnectEnabled(enabled);
+              void saveTools({ autoReconnectEnabled: enabled });
             }}
           />
           <StonegyToggle

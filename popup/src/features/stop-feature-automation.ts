@@ -1,5 +1,5 @@
 import { sendBot } from "../api/bot";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import { getFeatureMasterOffPatch } from "../../../lib/core/features/feature-control";
 import type { FeatureId } from "./index";
 import { isHuntControlledByParent } from "./index";

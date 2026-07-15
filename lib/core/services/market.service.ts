@@ -554,10 +554,6 @@ export class MarketService extends Service {
           waitForResponse: true,
           timeoutMs: options.timeoutMs,
           cooldownMs: options.cooldownMs ?? featureCooldown("market.intervalScan"),
-          marketContext: {
-            page,
-            itemId: itemId ?? undefined,
-          },
         }
       );
     } finally {

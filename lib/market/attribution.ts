@@ -1,4 +1,4 @@
-import type { MarketSnapshotData } from "./types";
+import type { MarketSnapshotData } from "../protocol-messages";
 
 function readFilterItemId(data: MarketSnapshotData | Record<string, unknown>): number | null {
   const filters = data.filters;
@@ -104,4 +104,40 @@ export function shouldAttributeMarketSnapshotToItem(
   }
 
   return false;
+}
+
+/** Correlate a market:snapshot response to the outbound market_get_snapshot request. */
+export function matchesMarketSnapshotToRequest(
+  request: { type: string; data?: unknown },
+  response: { type: string; data?: unknown }
+): boolean {
+  if (response.type !== "market:snapshot") {
+    return false;
+  }
+
+  const requestData =
+    request.data && typeof request.data === "object"
+      ? (request.data as Record<string, unknown>)
+      : {};
+  const responseData =
+    (response.data as MarketSnapshotData | Record<string, unknown> | undefined) ?? {};
+
+  const filters =
+    requestData.filters && typeof requestData.filters === "object"
+      ? (requestData.filters as Record<string, unknown>)
+      : {};
+  const itemId = typeof filters.itemId === "number" ? filters.itemId : null;
+  if (itemId != null && itemId > 0) {
+    return shouldAttributeMarketSnapshotToItem(responseData, itemId);
+  }
+
+  const referenceOrderId = requestData.referenceOrderId;
+  if (typeof referenceOrderId === "string" && referenceOrderId.length > 0) {
+    return true;
+  }
+
+  const requestPage = typeof requestData.page === "number" ? requestData.page : 1;
+  const responsePage =
+    typeof responseData.page === "number" ? responseData.page : null;
+  return responsePage === requestPage;
 }

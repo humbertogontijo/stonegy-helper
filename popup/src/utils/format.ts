@@ -1,4 +1,4 @@
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import type { PlayerState } from "../../../lib/types";
 
 const PLAYER_STATE_LABELS: Record<PlayerState, string> = {

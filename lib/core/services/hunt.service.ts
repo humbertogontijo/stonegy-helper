@@ -1,4 +1,4 @@
-import { getHuntById } from "../../hunts";
+import { isStartableHuntId } from "../../hunts";
 import {
   canRestartHunt,
   enableAutoHuntBlockReason,
@@ -119,6 +119,11 @@ export class HuntService extends Service {
 
     const message = event.message;
 
+    if (message.type === ReceiveMessageTypes.PLAYER_DEATH) {
+      this.stopAutoHuntOnDeath();
+      return;
+    }
+
     // Auto-hunt restart: only when restart mode is active (autoHuntEnabled && !autoTaskerEnabled).
     if (
       (message.type === ReceiveMessageTypes.HUNT_FINISHED ||
@@ -128,6 +133,17 @@ export class HuntService extends Service {
       this.ctx.session.deferFromWire(() =>
         this.run("hunt", () => this.handleAutoHuntEventInternal(event))
       );
+    }
+  }
+
+  /** Death ends the hunt loop; tasker owns its own stop path when it is controlling hunt. */
+  private stopAutoHuntOnDeath(): void {
+    const settings = this.ctx.settings.get();
+    if (settings.autoHuntEnabled && !settings.autoTaskerEnabled) {
+      this.ctx.session.updateSettings({ autoHuntEnabled: false });
+    }
+    if (this.flow.phase !== "idle") {
+      this.setFlowPhase("idle");
     }
   }
 
@@ -147,7 +163,7 @@ export class HuntService extends Service {
       const alreadyHunting =
         this.isHunting() || this.partyState.partyStatus === "hunting";
       const handlingLoot = this.isLootBlockingRestart();
-      const huntValid = selectedHuntId != null && !!getHuntById(selectedHuntId);
+      const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
 
       const canRestart = canRestartHunt({
         isLeader,
@@ -275,7 +291,7 @@ export class HuntService extends Service {
         const alreadyHunting =
           this.isHunting() || this.partyState.partyStatus === "hunting";
         const handlingLoot = this.isLootBlockingRestart();
-        const huntValid = selectedHuntId != null && !!getHuntById(selectedHuntId);
+        const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
 
         const canRestart = canRestartHunt({
           isLeader,
@@ -340,7 +356,7 @@ export class HuntService extends Service {
     trace?: FlowTraceRecorder
   ): Promise<{ ok: boolean; error?: string; deferred?: boolean }> {
     const session = this.ctx.session;
-    const huntValid = !!getHuntById(huntId);
+    const huntValid = isStartableHuntId(huntId);
     const isLeader = isPartyLeader(this.identity());
     const alreadyHunting = this.isHunting();
 
@@ -351,8 +367,10 @@ export class HuntService extends Service {
     if (!huntValid) {
       this.setFlowPhase("failed", { lastError: "invalid hunt" });
       this.setFlowPhase("idle");
-      trace?.finish("failed", { error: "Select a valid hunt on the Battle tab." });
-      return { ok: false, error: "Select a valid hunt on the Battle tab." };
+      const error =
+        "Boss/quest maps can't be started from Hunt — select a catalog hunt on the Battle tab.";
+      trace?.finish("failed", { error });
+      return { ok: false, error };
     }
 
     const timeoutMs = options.timeoutMs ?? resolveStartHuntTimeoutMs(session);
@@ -536,7 +554,7 @@ export class HuntService extends Service {
     const traced = await this.traceFlow("enable-auto-hunt", async (trace) => {
       const session = this.ctx.session;
 
-      if (!Number.isFinite(huntId) || !getHuntById(huntId)) {
+      if (!Number.isFinite(huntId) || !isStartableHuntId(huntId)) {
         trace.guard("hunt_valid", false);
         trace.finish("failed", { error: "Select a hunt on the Battle tab first." });
         return { ok: false as const, error: "Select a hunt on the Battle tab first." };
@@ -577,7 +595,7 @@ export class HuntService extends Service {
       const block = enableAutoHuntBlockReason({
         connected: this.ctx.session.connected,
         autoTaskerEnabled: session.settings.autoTaskerEnabled,
-        hasValidHunt: !!getHuntById(huntId),
+        hasValidHunt: isStartableHuntId(huntId),
         hasCharacterId: !!this.sessionState.characterId,
         partySnapshotSynced: this.partyState.partySnapshotSynced,
         isLeader: isPartyLeader(this.identity()),
@@ -630,7 +648,7 @@ export class HuntService extends Service {
     return { ...traced, state: this.ctx.session.botState };
   }
 
-  /** Disable auto-hunt: turns off the loop and leaves the current hunt if needed. */
+  /** Disable auto-hunt: turns off the loop without leaving the current hunt. */
   async disableAutoHunt(): Promise<HuntControlResult> {
     const session = this.ctx.session;
 
@@ -646,12 +664,7 @@ export class HuntService extends Service {
     }
 
     session.updateSettings({ autoHuntEnabled: false });
-
-    if (this.isHunting()) {
-      await this.leaveHuntIfActive();
-    } else {
-      this.setFlowPhase("idle");
-    }
+    this.setFlowPhase("idle");
 
     return { ok: true, message: "Auto hunt stopped.", state: session.botState };
   }

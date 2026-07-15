@@ -1,6 +1,6 @@
 import type { FeatureId } from "../features";
 import { FEATURE_TAB_ORDER } from "../features";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 
 export type FeatureMasterMap = Record<FeatureId, boolean>;
 

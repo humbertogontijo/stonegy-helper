@@ -7,7 +7,7 @@ export enum StonegyBinaryMessageType {
   KillEvent = 0x06,
   EntityUpdate = 0x08,
   VitalDelta = 0x09,
-  /** Multiplexed hunt frame: ground loot, item grants, or entity uuid lists. */
+  /** Multiplexed hunt frame: monster loot, item grants, or entity uuid lists. */
   HuntLoot = 0x0a,
   AnalyzerStats = 0x0b,
   CounterTriplet = 0x0c,
@@ -207,33 +207,7 @@ import type {
   HuntEntitySpawnBody,
   HuntAnalyzerSnapshotBody,
   EntityUuidListBody,
-  GroundLootBody,
-  ItemGrantBody,
-  KillEventBody,
-  PlayerVitalsBody,
-  SessionMetricBody,
-  GoldBalanceBody,
-  StatusEffectBody,
-  VitalDeltaBody,
-  XpGainBody,
-} from "../protocol-messages.ts";
-
-export type {
-  AnalyzerStatsBody,
-  CombatDamageBody,
-  CounterTripletBody,
-  DecodedHuntFrameBody,
-  EntityRef,
-  EntityUpdateBody,
-  GroundItemUpdateBody,
-  HuntAnalyzerMonsterEntry,
-  HuntAnalyzerLootItem,
-  HuntAnalyzerPartyMember,
-  HuntAnalyzerSnapshotBody,
-  HuntEntitySpawnBody,
-  EntityUuidListBody,
-  GroundLootBody,
-  GroundLootDropEntry,
+  MonsterLootBody,
   ItemGrantBody,
   KillEventBody,
   PlayerVitalsBody,
@@ -279,7 +253,7 @@ export type DecodedBinaryBody =
   | { kind: "kill_event"; data: KillEventBody }
   | { kind: "entity_update"; data: EntityUpdateBody }
   | { kind: "vital_delta"; data: VitalDeltaBody }
-  | { kind: "ground_loot"; data: GroundLootBody }
+  | { kind: "monster_loot"; data: MonsterLootBody }
   | { kind: "item_grant"; data: ItemGrantBody }
   | { kind: "entity_uuid_list"; data: EntityUuidListBody }
   | { kind: "analyzer_stats"; data: AnalyzerStatsBody }

@@ -110,6 +110,13 @@ export function isMountItem(itemId: number): boolean {
   return getItemById(itemId)?.mountItem === true;
 }
 
+/** Mount item IDs from the catalog, sorted by name. */
+export function listMountItemIds(): number[] {
+  return listItems()
+    .filter((item) => item.mountItem === true)
+    .map((item) => item.id);
+}
+
 /** Untradable and quest items must never be auto-sold (market or NPC). */
 export function shouldNeverAutoSell(itemId: number): boolean {
   const item = getItemById(itemId);
@@ -146,16 +153,34 @@ export function normalizeRarityBorderTier(tier: number | null | undefined): Rari
   return value as RarityBorderTier;
 }
 
+/** Prefer rarityBorderTier; fall back to classification when the border tier is missing. */
+export function getItemMarketRarityTier(itemId: number): number | null {
+  const item = getItemById(itemId);
+  if (!item) {
+    return null;
+  }
+
+  if (typeof item.rarityBorderTier === "number" && Number.isFinite(item.rarityBorderTier)) {
+    return item.rarityBorderTier;
+  }
+
+  if (typeof item.classification === "number" && Number.isFinite(item.classification)) {
+    return item.classification;
+  }
+
+  return null;
+}
+
 export function getItemRarityBorderTier(itemId: number): RarityBorderTier | null {
-  const tier = getItemById(itemId)?.rarityBorderTier;
-  if (typeof tier !== "number" || !Number.isFinite(tier)) {
+  const tier = getItemMarketRarityTier(itemId);
+  if (tier == null) {
     return null;
   }
   return normalizeRarityBorderTier(tier);
 }
 
-/** True when the item has a rarity border at or above the configured minimum. */
+/** True when rarityBorderTier (or classification fallback) is at or above the configured minimum. */
 export function matchesMarketSellRarity(itemId: number, minTier: number): boolean {
-  const tier = getItemById(itemId)?.rarityBorderTier;
-  return typeof tier === "number" && tier >= minTier;
+  const tier = getItemMarketRarityTier(itemId);
+  return tier != null && tier >= minTier;
 }

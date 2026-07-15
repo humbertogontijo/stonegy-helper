@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BotRpcError, sendBot } from "../api/bot";
-import type { BotState, ConnectionHint } from "../types/bot";
+import type { BotState } from "../../../lib/types";
+import type { ConnectionHint } from "../types/bot";
 import { isGameConnected } from "../utils/format";
 
 export function useBotState() {

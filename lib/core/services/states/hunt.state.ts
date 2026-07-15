@@ -15,6 +15,7 @@ function defaultHunt(): Omit<
 > {
   return {
     activeHuntId: null,
+    activeHuntTitle: null,
     currentLureId: null,
     currentPartyTileX: null,
     currentPartyTileY: null,
@@ -25,6 +26,7 @@ export class HuntState extends DomainState {
   readonly id: DomainStateId = "huntState";
 
   private _activeHuntId: number | null = null;
+  private _activeHuntTitle: string | null = null;
   private _currentLureId: number | null = null;
   private _currentPartyTileX: number | null = null;
   private _currentPartyTileY: number | null = null;
@@ -46,6 +48,10 @@ export class HuntState extends DomainState {
     return this._activeHuntId;
   }
 
+  get activeHuntTitle(): string | null {
+    return this._activeHuntTitle;
+  }
+
   get currentLureId(): number | null {
     return this._currentLureId;
   }
@@ -61,10 +67,15 @@ export class HuntState extends DomainState {
   /** Game hunt slice (bot-only pending/bootstrap fields merged elsewhere). */
   projection(): Pick<
     HuntProjection,
-    "activeHuntId" | "currentLureId" | "currentPartyTileX" | "currentPartyTileY"
+    | "activeHuntId"
+    | "activeHuntTitle"
+    | "currentLureId"
+    | "currentPartyTileX"
+    | "currentPartyTileY"
   > {
     return {
       activeHuntId: this._activeHuntId,
+      activeHuntTitle: this._activeHuntTitle,
       currentLureId: this._currentLureId,
       currentPartyTileX: this._currentPartyTileX,
       currentPartyTileY: this._currentPartyTileY,
@@ -75,12 +86,19 @@ export class HuntState extends DomainState {
     patch: Partial<
       Pick<
         HuntProjection,
-        "activeHuntId" | "currentLureId" | "currentPartyTileX" | "currentPartyTileY"
+        | "activeHuntId"
+        | "activeHuntTitle"
+        | "currentLureId"
+        | "currentPartyTileX"
+        | "currentPartyTileY"
       >
     >
   ): void {
     if (patch.activeHuntId !== undefined) {
       this._activeHuntId = patch.activeHuntId;
+    }
+    if (patch.activeHuntTitle !== undefined) {
+      this._activeHuntTitle = patch.activeHuntTitle;
     }
     if (patch.currentLureId !== undefined) {
       this._currentLureId = patch.currentLureId;
@@ -96,6 +114,7 @@ export class HuntState extends DomainState {
   private clear(): void {
     const cleared = defaultHunt();
     this._activeHuntId = cleared.activeHuntId;
+    this._activeHuntTitle = cleared.activeHuntTitle;
     this._currentLureId = cleared.currentLureId;
     this._currentPartyTileX = cleared.currentPartyTileX;
     this._currentPartyTileY = cleared.currentPartyTileY;
@@ -115,6 +134,10 @@ export class HuntState extends DomainState {
       }
       this._activeHuntId =
         typeof hunt.id === "number" ? hunt.id : this._activeHuntId;
+      this._activeHuntTitle =
+        typeof hunt.title === "string" && hunt.title.length > 0
+          ? hunt.title
+          : this._activeHuntTitle;
       const bootstrapLureId = readAppliedLureIdFromPayload(message.data);
       if (bootstrapLureId != null) {
         this._currentLureId = bootstrapLureId;

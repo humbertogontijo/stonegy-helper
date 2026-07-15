@@ -1,15 +1,18 @@
 import { featureCooldown } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity } from "../humanize";
+import { shouldDeferHuntRestartForLootFinish } from "../../domain/hunt/guards";
+import { isLootSellEnabled } from "../../domain/loot-sell";
 import { ReceiveMessageTypes, SendMessageTypes } from "../../protocol";
 import {
   findNextMonsterMission,
-  formatActiveTask,
-  getActiveTaskForQuest,
-  isTaskComplete,
+  formatActiveTasks,
+  getActiveTasksForQuest,
+  isMissionTasksComplete,
   resolveTaskHuntId,
 } from "../../domain/tasks";
 import { isInActiveHunt, hasQuestContextData, isPartyReady } from "../context-sync";
 import { QUEST_PUSH_WAIT_MS, requestQuestSnapshot, waitForPartySnapshot } from "../readiness";
+import { isHandlingLoot } from "../player-state";
 import type { GameEvent } from "../events/types";
 import type { TaskerPhase } from "../../types";
 import { Service, type ServiceContext } from "./service";
@@ -19,6 +22,7 @@ import type { SessionState } from "./states/session.state";
 import type { PartyState } from "./states/party.state";
 import type { HuntControlResult, HuntService } from "./hunt.service";
 import type { BattleService } from "./battle.service";
+import type { LootService } from "./loot.service";
 
 /** Align with existing TaskerPhase in lib/types.ts */
 export type TasksFlowPhase = TaskerPhase;
@@ -46,6 +50,9 @@ export class TasksService extends Service {
 
   /** Timeout handle for the sync-wait guard. */
   private taskerSyncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  /** Avoid stacking leave_hunt when get_tasks keeps confirming the mission is met. */
+  private leavingHuntForTask = false;
 
   constructor(
     ctx: ServiceContext,
@@ -105,7 +112,32 @@ export class TasksService extends Service {
   }
 
   async onEvent(event: GameEvent): Promise<void> {
+    if (event.kind === "monster_loot") {
+      this.handleMonsterLootForTasksPoll();
+      return;
+    }
+
+    if (event.kind === "loot_pipeline_finished") {
+      if (this.ctx.settings.get().autoTaskerEnabled) {
+        // Same resume point as auto-hunt: only after sell/split returns to idle.
+        this.ctx.session.deferFromWire(async () => {
+          this.resumeTaskerAfterHuntLoot();
+        });
+      }
+      return;
+    }
+
     if (event.kind !== "json") {
+      return;
+    }
+
+    const message = event.message;
+
+    if (message.type === ReceiveMessageTypes.PLAYER_DEATH) {
+      this.pullTaskerFlowFromSettings();
+      if (this.ctx.settings.get().autoTaskerEnabled) {
+        this.stopAutoTasker();
+      }
       return;
     }
 
@@ -114,8 +146,6 @@ export class TasksService extends Service {
     if (!settings.autoTaskerEnabled && this.flow.phase === "idle") {
       return;
     }
-
-    const message = event.message;
 
     if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
       await this.handleTaskerHuntFinishedInternal();
@@ -128,6 +158,51 @@ export class TasksService extends Service {
     ) {
       await this.handleTaskerEventInternal(event);
     }
+  }
+
+  /** True while post-hunt sell/split owns the idle transition (mirrors hunt restart). */
+  private isLootBlockingAdvance(): boolean {
+    if (isHandlingLoot(this.ctx.session)) {
+      return true;
+    }
+    const loot = this.ctx.session.services.tryGet<LootService>("loot");
+    return loot?.isBusyWithPostHuntLoot() === true;
+  }
+
+  /**
+   * On HUNT_FINISHED, defer tasker advance when loot sell/split will run —
+   * same race guard as auto-hunt restart.
+   */
+  private shouldDeferAdvanceForLootFinish(): boolean {
+    if (this.isLootBlockingAdvance()) {
+      return true;
+    }
+    const settings = this.ctx.settings.get();
+    const lootMasterOn = this.ctx.isMasterEnabled("loot");
+    return shouldDeferHuntRestartForLootFinish(
+      lootMasterOn
+        ? settings
+        : { ...settings, autoSplitLootOnHuntFinished: false },
+      {
+        isLeader: isPartyLeader(this.identity()),
+        lootSellEnabled: lootMasterOn && isLootSellEnabled(settings),
+      }
+    );
+  }
+
+  /** While hunting, refresh task counters on each monster kill. */
+  private handleMonsterLootForTasksPoll(): void {
+    this.pullTaskerFlowFromSettings();
+    const settings = this.ctx.settings.get();
+    if (!settings.autoTaskerEnabled || this.flow.phase !== "hunting") {
+      return;
+    }
+
+    void this.ctx.session.commands.run(
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
+    );
   }
 
   private clearTaskerSyncTimeout(): void {
@@ -169,7 +244,13 @@ export class TasksService extends Service {
 
   private beginTaskerSync(status: string): void {
     this.setTaskerFlow("syncing", status);
-    requestQuestSnapshot(this.ctx.session);
+    // Prefer get_tasks — works after a hunt and even when quest context already exists
+    // (requestQuestSnapshot no-ops in that case and would leave us stuck until timeout).
+    void this.ctx.session.commands.run(
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
+    );
     this.scheduleTaskerSyncTimeout();
   }
 
@@ -200,6 +281,13 @@ export class TasksService extends Service {
         return;
       }
 
+      const handlingLoot = this.isLootBlockingAdvance();
+      trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
+      if (handlingLoot) {
+        trace.finish("skipped", { error: "handling loot" });
+        return;
+      }
+
       this.flow = { ...this.flow, busy: true };
       trace.setPhase(this.flow.phase);
 
@@ -214,7 +302,8 @@ export class TasksService extends Service {
           return;
         }
 
-        const activeTask = getActiveTaskForQuest(this.tasksState.tasks, questId);
+        const activeTasks = getActiveTasksForQuest(this.tasksState.tasks, questId);
+        const activeTask = activeTasks[0] ?? null;
 
         if (!activeTask) {
           const phase = this.flow.phase;
@@ -277,7 +366,7 @@ export class TasksService extends Service {
 
         this.clearTaskerSyncTimeout();
 
-        if (!isTaskComplete(activeTask)) {
+        if (!isMissionTasksComplete(activeTasks)) {
           const huntId = resolveTaskHuntId(activeTask, this.sessionState.level);
           if (huntId == null) {
             this.setTaskerFlow("error", "No hunt found for the current task.", {
@@ -291,14 +380,20 @@ export class TasksService extends Service {
             return;
           }
 
-          this.setTaskerFlow(
-            "hunting",
-            `Hunting ${formatActiveTask(activeTask)} at hunt #${huntId}`,
-            { targetHuntId: huntId }
-          );
+          const alreadyHuntingThis =
+            this.flow.phase === "hunting" &&
+            this.flow.targetHuntId === huntId &&
+            isInActiveHunt(session);
+
+          this.setTaskerFlow("hunting", "Hunting", { targetHuntId: huntId });
           session.updateSettings({ autoHuntEnabled: true });
           this.battle.setSelectedHuntId(huntId);
           trace.setPhase("hunting");
+
+          // Mid-hunt get_tasks polls only need progress text — don't re-lock lure every kill.
+          if (alreadyHuntingThis) {
+            return;
+          }
 
           const identity = this.identity();
           if (!isInActiveHunt(session) && isPartyLeader(identity)) {
@@ -317,6 +412,17 @@ export class TasksService extends Service {
           this.setTaskerFlow("hunting", "Task complete — finishing current hunt…");
           session.updateSettings({ autoHuntEnabled: false });
           trace.setPhase("hunting");
+          if (!this.leavingHuntForTask && isPartyLeader(this.identity())) {
+            this.leavingHuntForTask = true;
+            // Off the wire stack: leave_hunt waits for hunt_finished.
+            this.ctx.session.deferFromWire(async () => {
+              try {
+                await this.hunt.leaveHuntIfActive();
+              } finally {
+                this.leavingHuntForTask = false;
+              }
+            });
+          }
           return;
         }
 
@@ -419,7 +525,7 @@ export class TasksService extends Service {
       }
 
       if (action === "claim_reward") {
-        this.beginTaskerSync(resultMessage || "Reward claimed — next task…");
+        this.beginTaskerSync("Reward claimed — next task…");
       }
     }
   }
@@ -428,6 +534,38 @@ export class TasksService extends Service {
     if (!this.ctx.session.settings.autoTaskerEnabled) {
       return;
     }
+    this.leavingHuntForTask = false;
+
+    if (this.shouldDeferAdvanceForLootFinish()) {
+      this.setTaskerFlow("syncing", "Hunt finished — waiting for loot…");
+      return;
+    }
+
+    this.resumeTaskerAfterHuntFinished();
+  }
+
+  /** Resume after hunt ends once loot sell/split has returned the player to idle. */
+  private resumeTaskerAfterHuntLoot(): void {
+    this.pullTaskerFlowFromSettings();
+    if (!this.ctx.session.settings.autoTaskerEnabled) {
+      return;
+    }
+    if (this.isLootBlockingAdvance()) {
+      return;
+    }
+    this.resumeTaskerAfterHuntFinished();
+  }
+
+  private resumeTaskerAfterHuntFinished(): void {
+    // In-hunt get_tasks polls already keep counters fresh — advance off the wire
+    // stack instead of waiting for a snapshot that requestQuestSnapshot would skip.
+    if (hasQuestContextData(this.ctx.session)) {
+      this.clearTaskerSyncTimeout();
+      this.setTaskerFlow("syncing", "Hunt finished — checking task…");
+      this.ctx.session.deferFromWire(() => this.advanceTasker());
+      return;
+    }
+
     this.beginTaskerSync("Hunt finished — syncing task…");
   }
 
@@ -441,6 +579,7 @@ export class TasksService extends Service {
 
   async startAutoTasker(): Promise<void> {
     this.flow = { ...this.flow, pendingClaimMissionId: null };
+    this.leavingHuntForTask = false;
     this.clearTaskerSyncTimeout();
     this.setTaskerFlow("idle", "Starting tasker…", {
       targetHuntId: this.flow.targetHuntId,
@@ -455,6 +594,7 @@ export class TasksService extends Service {
 
   stopAutoTasker(): void {
     this.flow = { ...this.flow, pendingClaimMissionId: null };
+    this.leavingHuntForTask = false;
     this.clearTaskerSyncTimeout();
     this.setTaskerFlow("idle", "Tasker stopped.", {
       targetHuntId: null,
@@ -531,7 +671,7 @@ export class TasksService extends Service {
     };
   }
 
-  /** Disable auto tasker: stops the loop and leaves an active hunt if needed. */
+  /** Disable auto tasker: stops the loop without leaving an active hunt. */
   async disableAutoTasker(): Promise<HuntControlResult> {
     const session = this.ctx.session;
     this.pullTaskerFlowFromSettings();
@@ -551,10 +691,6 @@ export class TasksService extends Service {
     }
 
     this.stopAutoTasker();
-
-    if (isInActiveHunt(session)) {
-      await this.hunt.leaveHuntIfActive();
-    }
 
     return { ok: true, message: "Auto tasker stopped.", state: session.botState };
   }
@@ -601,7 +737,8 @@ export class TasksService extends Service {
       return { ok: false, error: "Syncing tasks — try Task now again in a moment." };
     }
 
-    const activeTask = getActiveTaskForQuest(this.tasksState.tasks, questId);
+    const activeTasks = getActiveTasksForQuest(this.tasksState.tasks, questId);
+    const activeTask = activeTasks[0] ?? null;
 
     if (!activeTask) {
       const nextMission = findNextMonsterMission(questId, {
@@ -630,14 +767,14 @@ export class TasksService extends Service {
       };
     }
 
-    if (!isTaskComplete(activeTask)) {
+    if (!isMissionTasksComplete(activeTasks)) {
       const huntId = resolveTaskHuntId(activeTask, this.sessionState.level);
       if (huntId == null) {
         return { ok: false, error: "No hunt found for the current task." };
       }
 
       this.battle.setSelectedHuntId(huntId);
-      this.setTaskerFlow("hunting", `Hunting ${formatActiveTask(activeTask)} at hunt #${huntId}`, {
+      this.setTaskerFlow("hunting", "Hunting", {
         targetHuntId: huntId,
       });
 
@@ -655,7 +792,7 @@ export class TasksService extends Service {
       }
       return {
         ok: true,
-        message: `Started hunt #${huntId} for ${formatActiveTask(activeTask)}.`,
+        message: `Started hunt #${huntId} for ${formatActiveTasks(activeTasks)}.`,
         state: session.botState,
       };
     }

@@ -6,6 +6,7 @@ import { patchSessionView } from "./projections/patch";
 import { ReceiveMessageTypes, SendMessageTypes, type StonegyMessage } from "../protocol";
 import type { Transport, WireMessage } from "./transport";
 import { HuntService } from "./services/hunt.service";
+import { LootService } from "./services/loot.service";
 import { TasksService } from "./services/tasks.service";
 
 class RelayTransport implements Transport {
@@ -64,7 +65,7 @@ describe("event-driven tasker pipeline", () => {
     vi.useRealTimers();
   });
 
-  it("advances tasker when TASKS_SNAPSHOT arrives after HUNT_FINISHED", async () => {
+  it("delivers after HUNT_FINISHED when task progress is already known", async () => {
     const transport = new RelayTransport();
     const session = leaderSession(transport, {
       autoTaskerEnabled: true,
@@ -92,12 +93,97 @@ describe("event-driven tasker pipeline", () => {
     transport.receive({ type: ReceiveMessageTypes.HUNT_FINISHED, data: { reason: "completed" } });
     await session.drainMessages();
 
+    expect(session.settings.taskerPhase).toBe("delivering");
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.QUEST_DELIVER_MONSTER_TASK,
+      { questId: 6, missionId: 1 },
+      { cooldownMs: 1000 }
+    );
+  });
+
+  it("waits for loot sell/split after HUNT_FINISHED before delivering", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoTaskerEnabled: true,
+      selectedTaskQuestId: 6,
+      taskerPhase: "hunting",
+      autoHuntEnabled: true,
+      autoSellLoot: true,
+    });
+    session.view = patchSessionView(session.view, {
+      quests: {
+        activeMonsterTasks: [
+          {
+            questId: 6,
+            missionId: 1,
+            monsterId: 1,
+            requiredAmount: 10,
+            currentAmount: 10,
+            met: true,
+          },
+        ],
+      },
+    });
+
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    transport.receive({ type: ReceiveMessageTypes.HUNT_FINISHED, data: { reason: "completed" } });
+    await session.drainMessages();
+
     expect(session.settings.taskerPhase).toBe("syncing");
+    expect(session.settings.taskerStatus).toBe("Hunt finished — waiting for loot…");
     expect(runSpy).not.toHaveBeenCalledWith(
       SendMessageTypes.QUEST_DELIVER_MONSTER_TASK,
       expect.anything(),
       expect.anything()
     );
+
+    // Simulate loot pipeline completing (flow cleared + back to idle).
+    session.services
+      .get<LootService>("loot")
+      .applyPendingHuntLootPatch({ pendingHuntLootSell: false });
+    session.services.setPlayerState("idling", "");
+    await session.services.dispatch({ kind: "loot_pipeline_finished" });
+    await session.drainMessages();
+
+    expect(session.settings.taskerPhase).toBe("delivering");
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.QUEST_DELIVER_MONSTER_TASK,
+      { questId: 6, missionId: 1 },
+      { cooldownMs: 1000 }
+    );
+  });
+
+  it("leaves the hunt when get_tasks shows the mission is complete", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoTaskerEnabled: true,
+      selectedTaskQuestId: 6,
+      taskerPhase: "hunting",
+      taskerTargetHuntId: 48,
+      autoHuntEnabled: true,
+    });
+    session.view = patchSessionView(session.view, {
+      party: { ...session.view.party, partyStatus: "hunting" },
+      hunt: { ...session.view.hunt, activeHuntId: 48 },
+      quests: {
+        activeMonsterTasks: [
+          {
+            questId: 6,
+            missionId: 1,
+            monsterId: 1,
+            requiredAmount: 10,
+            currentAmount: 10,
+            met: true,
+          },
+        ],
+      },
+    });
+
+    const leaveSpy = vi
+      .spyOn(session.services.get<HuntService>("hunt"), "leaveHuntIfActive")
+      .mockResolvedValue({ left: true });
+    vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
 
     transport.receive({
       type: ReceiveMessageTypes.TASKS_SNAPSHOT,
@@ -117,11 +203,35 @@ describe("event-driven tasker pipeline", () => {
     });
     await session.drainMessages();
 
-    expect(session.settings.taskerPhase).toBe("delivering");
+    expect(session.settings.taskerStatus).toBe("Task complete — finishing current hunt…");
+    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(leaveSpy).toHaveBeenCalled();
+  });
+
+  it("requests get_tasks after HUNT_FINISHED when quest context is missing", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoTaskerEnabled: true,
+      selectedTaskQuestId: 6,
+      taskerPhase: "hunting",
+      autoHuntEnabled: true,
+    });
+    session.view = patchSessionView(session.view, {
+      market: { ...defaultSessionView().market, lastQuestSnapshotAt: null },
+      quests: { activeMonsterTasks: [] },
+      character: { ...session.view.character, finishedTasks: [], finishedQuests: [] },
+    });
+
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true });
+
+    transport.receive({ type: ReceiveMessageTypes.HUNT_FINISHED, data: { reason: "completed" } });
+    await session.drainMessages();
+
+    expect(session.settings.taskerPhase).toBe("syncing");
     expect(runSpy).toHaveBeenCalledWith(
-      SendMessageTypes.QUEST_DELIVER_MONSTER_TASK,
-      { questId: 6, missionId: 1 },
-      { cooldownMs: 1000 }
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
     );
   });
 
@@ -148,6 +258,7 @@ describe("event-driven tasker pipeline", () => {
     await session.drainMessages();
 
     expect(session.settings.taskerPhase).toBe("syncing");
+    expect(session.settings.taskerStatus).toBe("Reward claimed — next task…");
     expect(runSpy).not.toHaveBeenCalledWith(
       SendMessageTypes.QUEST_START_MONSTER_TASK,
       expect.anything(),
@@ -171,7 +282,7 @@ describe("event-driven tasker pipeline", () => {
     );
   });
 
-  it("requests quest snapshot without blocking when quest context is missing at idle", async () => {
+  it("requests get_tasks without blocking when quest context is missing at idle", async () => {
     const transport = new RelayTransport();
     const session = leaderSession(transport, {
       autoTaskerEnabled: true,
@@ -189,10 +300,103 @@ describe("event-driven tasker pipeline", () => {
 
     expect(session.settings.taskerPhase).toBe("syncing");
     expect(runSpy).toHaveBeenCalledWith(
-      SendMessageTypes.QUEST_GET_SNAPSHOT,
+      SendMessageTypes.GET_TASKS,
       {},
-      expect.objectContaining({ force: true, waitForResponse: false })
+      { force: true, waitForResponse: false }
     );
+  });
+
+  it("sends get_tasks on every monster_loot while hunting", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoTaskerEnabled: true,
+      selectedTaskQuestId: 6,
+      taskerPhase: "hunting",
+      autoHuntEnabled: true,
+    });
+    const tasks = session.services.get<TasksService>("tasks");
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true });
+
+    const lootEvent = {
+      kind: "monster_loot" as const,
+      direction: "receive" as const,
+      data: { subType: 1 as const, totalLootValue: 10, dropCount: 0, drops: [] },
+      raw: "",
+    };
+
+    await tasks.onEvent(lootEvent);
+    await tasks.onEvent(lootEvent);
+
+    expect(runSpy).toHaveBeenCalledTimes(2);
+    expect(runSpy).toHaveBeenNthCalledWith(
+      1,
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
+    );
+    expect(runSpy).toHaveBeenNthCalledWith(
+      2,
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
+    );
+  });
+});
+
+describe("player_death stops hunt automation", () => {
+  const deathPayload = {
+    expLost: 100,
+    levelBefore: 50,
+    levelAfter: 49,
+    itemsDeathLost: [],
+    blessingsBeforeDeathCount: 0,
+    hadAolEquipped: false,
+    aolConsumed: false,
+    mode: "pve",
+    deathAt: "2026-07-15T00:15:27.985Z",
+  };
+
+  it("stops auto hunt on player_death", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+    });
+
+    transport.receive({
+      type: ReceiveMessageTypes.PLAYER_DEATH,
+      data: deathPayload,
+    });
+    await session.drainMessages();
+
+    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(session.settings.autoTaskerEnabled).toBe(false);
+  });
+
+  it("stops auto tasker (and hunt) on player_death", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoTaskerEnabled: true,
+      autoHuntEnabled: true,
+      selectedTaskQuestId: 6,
+      taskerPhase: "hunting",
+      taskerStatus: "Hunting for task",
+      taskerTargetHuntId: 1,
+    });
+
+    transport.receive({
+      type: ReceiveMessageTypes.PLAYER_DEATH,
+      data: deathPayload,
+    });
+    await session.drainMessages();
+
+    expect(session.settings.autoTaskerEnabled).toBe(false);
+    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(session.settings.taskerPhase).toBe("idle");
+    expect(session.services.get<TasksService>("tasks").snapshot()).toMatchObject({
+      phase: "idle",
+      targetHuntId: null,
+    });
   });
 });
 

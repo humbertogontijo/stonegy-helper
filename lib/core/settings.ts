@@ -26,10 +26,18 @@ export interface Settings {
   autoSellLoot: boolean;
   lootSellModeByItemId: Record<number, LootSellMode>;
   lootSellExcludedItemIds: number[];
-  /** Min rarityBorderTier for default market-sell rule (items below → NPC). */
+  /** Min rarityBorderTier (classification fallback) for default rarity sell rule (items below → NPC). */
   marketSellMinRarityTier: number;
-  /** When true, mount items are market-sell candidates instead of keep. */
-  marketSellMountItems: boolean;
+  /** Sell mode for items at or above marketSellMinRarityTier (unless per-item override). */
+  minRaritySellMode: LootSellMode;
+  /** Default sell venue for mount items (unless per-item override). */
+  mountSellMode: LootSellMode;
+  /** Default sell venue for imbuement materials (unless per-item override). */
+  imbuementSellMode: LootSellMode;
+  /** Default sell venue for craft items (unless per-item override). */
+  craftSellMode: LootSellMode;
+  /** Default sell venue for enchant items (unless per-item override). */
+  enchantSellMode: LootSellMode;
   marketTaxPercent: number;
   marketUndercutGold: number;
   marketScanEnabled: boolean;
@@ -44,7 +52,11 @@ export interface Settings {
   huntBattleByHuntId: Record<number, HuntBattleSettings>;
   loggingEnabled: boolean;
   keepAliveEnabled: boolean;
+  /** Reload the game tab when the socket closes after a successful connect. */
+  autoReconnectEnabled: boolean;
   autoTaskerEnabled: boolean;
+  /** When auto tasker is on, force the hunt's max lure and lock battle lure config. */
+  taskerMaxLure: boolean;
   selectedTaskQuestId: number | null;
   taskerPhase: TaskerPhase;
   taskerStatus: string;
@@ -98,7 +110,11 @@ export function defaultSettings(): Settings {
     lootSellModeByItemId: {},
     lootSellExcludedItemIds: [],
     marketSellMinRarityTier: 1,
-    marketSellMountItems: false,
+    minRaritySellMode: "market",
+    mountSellMode: "keep",
+    imbuementSellMode: "keep",
+    craftSellMode: "keep",
+    enchantSellMode: "keep",
     marketTaxPercent: DEFAULT_MARKET_TAX_PERCENT,
     marketUndercutGold: DEFAULT_MARKET_UNDERCUT_GOLD,
     marketScanEnabled: false,
@@ -112,7 +128,9 @@ export function defaultSettings(): Settings {
     huntBattleByHuntId: {},
     loggingEnabled: true,
     keepAliveEnabled: true,
+    autoReconnectEnabled: false,
     autoTaskerEnabled: false,
+    taskerMaxLure: true,
     selectedTaskQuestId: 6,
     taskerPhase: "idle",
     taskerStatus: "",

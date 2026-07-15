@@ -1,4 +1,4 @@
-import type { MarketSnapshotData } from "./types";
+import type { MarketSnapshotData } from "../protocol-messages";
 
 export function marketOrderIds(snapshot: MarketSnapshotData): string[] {
   const ids: string[] = [];

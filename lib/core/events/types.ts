@@ -1,4 +1,10 @@
-import type { GroundLootBody, InventorySnapshotBody, ItemGrantBody, MarketSnapshotBody, GoldBalanceBody } from "../../binary/types";
+import type { InventorySnapshotBody, MarketSnapshotBody } from "../../binary/types";
+import type {
+  MonsterLootBody,
+  GroundItemUpdateBody,
+  ItemGrantBody,
+  GoldBalanceBody,
+} from "../../protocol-messages";
 import type { HuntLootSellResult } from "../services/loot.service";
 import type { StonegyMessage } from "../../protocol";
 
@@ -22,15 +28,21 @@ export type GameEvent =
       raw: string;
     }
   | {
-      kind: "ground_loot";
+      kind: "monster_loot";
       direction: "receive";
-      data: GroundLootBody;
+      data: MonsterLootBody;
       raw: string;
     }
   | {
       kind: "item_grant";
       direction: "receive";
       data: ItemGrantBody;
+      raw: string;
+    }
+  | {
+      kind: "ground_item_update";
+      direction: "receive";
+      data: GroundItemUpdateBody;
       raw: string;
     }
   | {

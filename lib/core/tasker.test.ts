@@ -85,7 +85,7 @@ describe("advanceTasker", () => {
     expect(session.settings.taskerPhase).toBe("starting");
   });
 
-  it("enters syncing and requests quest snapshot when quest context is missing at idle", async () => {
+  it("enters syncing and requests get_tasks when quest context is missing at idle", async () => {
     const transport = new MockTransport();
     const session = taskerSession(transport);
     session.view = patchSessionView(session.view, {
@@ -98,9 +98,9 @@ describe("advanceTasker", () => {
 
     expect(session.settings.taskerPhase).toBe("syncing");
     expect(runSpy).toHaveBeenCalledWith(
-      SendMessageTypes.QUEST_GET_SNAPSHOT,
+      SendMessageTypes.GET_TASKS,
       {},
-      expect.objectContaining({ force: true, waitForResponse: false })
+      { force: true, waitForResponse: false }
     );
     expect(runSpy).not.toHaveBeenCalledWith(
       SendMessageTypes.QUEST_START_MONSTER_TASK,

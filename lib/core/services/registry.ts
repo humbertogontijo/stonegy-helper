@@ -252,6 +252,7 @@ export class ServiceRegistry {
 
     const huntGame = hunt?.projection() ?? {
       activeHuntId: null,
+      activeHuntTitle: null,
       currentLureId: null,
       currentPartyTileX: null,
       currentPartyTileY: null,

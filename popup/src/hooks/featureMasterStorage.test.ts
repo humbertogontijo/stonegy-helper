@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mastersFromBotState, readFeatureMaster } from "./featureMasterStorage";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 
 function stubState(masters?: Record<string, boolean>): BotState {
   return {

@@ -2,6 +2,9 @@ import {
   getInventoryItemAmount,
   inventorySellableAmountsFromItems,
 } from "../inventory";
+import { isCraftResourceItem } from "../craft";
+import { isEnchantResourceItem } from "../enchant";
+import { isImbuementItem } from "../imbuement";
 import {
   getItemById,
   getItemName,
@@ -15,12 +18,11 @@ import {
   netPerItemAfterMarketSale,
   suggestedListPrice,
 } from "../market/pricing";
-import type { ItemMarketPrice, MarketPricingOptions, SellVenue } from "../market/types";
+import type { ItemMarketPrice } from "../types";
+import type { MarketPricingOptions, SellVenue } from "../market/types";
 import type { Settings } from "../core/settings";
 import type { BotState, LootSellMode, LootSellRule } from "../types";
 import type { InventoryItemEntry } from "../binary/types";
-
-export type { LootSellMode, LootSellRule };
 
 const LOOT_SELL_OVERRIDE_MODES = new Set<LootSellMode>(["npc", "market", "keep"]);
 
@@ -83,9 +85,51 @@ export function normalizeLootSellModes(
   return normalized;
 }
 
+/** Mount / imbuement / craft / enchant items use a category sell mode unless overridden. */
+export function isSpecialLootSellCategoryItem(itemId: number): boolean {
+  return (
+    isMountItem(itemId) ||
+    isImbuementItem(itemId) ||
+    isCraftResourceItem(itemId) ||
+    isEnchantResourceItem(itemId)
+  );
+}
+
+/** Normalize a category sell mode; legacy boolean `true` maps to market. */
+export function normalizeCategorySellMode(
+  value: unknown,
+  legacyEnabled?: boolean
+): LootSellMode {
+  if (value === "keep" || value === "npc" || value === "market") {
+    return value;
+  }
+  return legacyEnabled ? "market" : "keep";
+}
+
+function categorySellModeForItem(
+  settings: Settings,
+  itemId: number
+): LootSellMode | null {
+  if (isMountItem(itemId)) {
+    return settings.mountSellMode ?? "keep";
+  }
+  if (isImbuementItem(itemId)) {
+    return settings.imbuementSellMode ?? "keep";
+  }
+  if (isCraftResourceItem(itemId)) {
+    return settings.craftSellMode ?? "keep";
+  }
+  if (isEnchantResourceItem(itemId)) {
+    return settings.enchantSellMode ?? "keep";
+  }
+  return null;
+}
+
 /**
  * Resolve keep / market / npc for an item:
- * untradable/quest → keep; explicit override → that mode; mount toggle; else min rarity → market, else npc.
+ * untradable/quest → keep; explicit override → that mode;
+ * mount/imbuement/craft/enchant → category sell mode;
+ * else min rarity → minRaritySellMode, else npc.
  */
 export function resolveLootSellRule(
   state: Pick<BotState, "settings">,
@@ -100,13 +144,14 @@ export function resolveLootSellRule(
     return override;
   }
 
-  if (isMountItem(itemId)) {
-    return state.settings.marketSellMountItems ? "market" : "keep";
+  const categoryMode = categorySellModeForItem(state.settings, itemId);
+  if (categoryMode != null) {
+    return categoryMode;
   }
 
   const minTier = state.settings.marketSellMinRarityTier ?? 1;
   if (matchesMarketSellRarity(itemId, minTier)) {
-    return "market";
+    return normalizeCategorySellMode(state.settings.minRaritySellMode, true);
   }
 
   return "npc";

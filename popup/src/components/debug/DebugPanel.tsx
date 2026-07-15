@@ -1,6 +1,11 @@
 import { useMemo, useState, type MouseEvent } from "react";
 import { sendBot } from "../../api/bot";
-import type { BotState, DebugEventRecord, DebugTypeStats } from "../../types/bot";
+import type {
+  BotState,
+  DebugCommandRecord,
+  DebugEventRecord,
+  DebugTypeStats,
+} from "../../../../lib/types";
 import { formatBinaryType, formatDebugTimestamp } from "../../utils/format";
 import { SectionTitle } from "../ui/SectionTitle";
 import { StonegyButton } from "../ui/StonegyButton";
@@ -10,13 +15,28 @@ interface DebugPanelProps {
   showFeedback: (msg: string, type?: "success" | "error") => void;
 }
 
-type DebugSection = "unknown" | "schema" | "lastByType";
+type DebugSection = "commands" | "unknown" | "schema" | "lastByType";
 
 const SECTIONS: Array<{ id: DebugSection; label: string }> = [
+  { id: "commands", label: "Commands" },
   { id: "unknown", label: "Unknown" },
   { id: "schema", label: "Schema drift" },
   { id: "lastByType", label: "Last by type" },
 ];
+
+function commandStatusClass(status: DebugCommandRecord["status"]): string {
+  switch (status) {
+    case "ok":
+      return "border-[rgba(72,187,120,0.45)] text-[rgb(110,210,150)]";
+    case "timeout":
+      return "border-[rgba(255,177,0,0.55)] text-[var(--gold-soft)]";
+    case "failed":
+    case "error":
+      return "border-[rgba(255,96,96,0.45)] text-[var(--danger)]";
+    default:
+      return "border-[rgba(255,177,0,0.35)] text-[var(--text-muted)]";
+  }
+}
 
 interface GroupedEvent {
   eventKey: string;
@@ -24,8 +44,18 @@ interface GroupedEvent {
   latest: DebugEventRecord;
 }
 
+function eventTypeName(event: DebugEventRecord): string {
+  return event.eventKey.replace(/^binary:/, "");
+}
+
 function sortByEventType(events: DebugEventRecord[]): DebugEventRecord[] {
   return [...events].sort((a, b) => a.eventKey.localeCompare(b.eventKey));
+}
+
+function sortByEventName(events: DebugEventRecord[]): DebugEventRecord[] {
+  return [...events].sort((a, b) =>
+    eventTypeName(a).localeCompare(eventTypeName(b), undefined, { sensitivity: "base" })
+  );
 }
 
 function groupEventsByType(events: DebugEventRecord[]): GroupedEvent[] {
@@ -359,6 +389,141 @@ function GroupedDirectionSection({
   );
 }
 
+function CommandCard({
+  command,
+  showFeedback,
+}: {
+  command: DebugCommandRecord;
+  showFeedback: (msg: string, type?: "success" | "error") => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const durationMs = Math.max(0, command.finishedAt - command.at);
+
+  const handleCopy = async (mouseEvent: MouseEvent<HTMLButtonElement>) => {
+    mouseEvent.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(command, null, 2));
+      showFeedback("Command copied", "success");
+    } catch (error) {
+      showFeedback(error instanceof Error ? error.message : "Failed to copy", "error");
+    }
+  };
+
+  return (
+    <article className="rounded-md border border-[var(--border-gold)] bg-[rgba(1,4,7,0.55)] p-2">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left cursor-pointer"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+            <time dateTime={new Date(command.at).toISOString()}>
+              {formatDebugTimestamp(command.at)}
+            </time>
+            <span
+              className={`rounded border px-1 py-0.5 text-[10px] uppercase tracking-wide ${commandStatusClass(command.status)}`}
+            >
+              {command.status}
+            </span>
+            <span className="tabular-nums">{durationMs}ms</span>
+            {command.attempt > 1 ? (
+              <span className="rounded border border-[rgba(255,177,0,0.35)] px-1 py-0.5 text-[10px] text-[var(--gold-soft)]">
+                attempt {command.attempt}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 truncate font-medium text-[var(--text-primary)]">
+            {command.commandId}
+            {command.expectedResponseType
+              ? ` → ${command.expectedResponseType}`
+              : ""}
+          </div>
+          {command.errorMessage ? (
+            <div className="mt-1 text-[11px] text-[var(--danger)]">{command.errorMessage}</div>
+          ) : null}
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            title="Copy command"
+            aria-label="Copy command"
+            onClick={(mouseEvent) => void handleCopy(mouseEvent)}
+            className="rounded border border-[var(--border-gold)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--gold-soft)] cursor-pointer"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            aria-label={expanded ? "Collapse command" : "Expand command"}
+            onClick={() => setExpanded((value) => !value)}
+            className="px-0.5 text-[10px] text-[var(--text-muted)] cursor-pointer"
+          >
+            {expanded ? "−" : "+"}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div className="mt-2 max-h-56 space-y-2 overflow-auto rounded bg-[rgba(0,0,0,0.35)] p-2 text-[10px] leading-relaxed text-[var(--text-body)]">
+          <div>
+            <div className="mb-0.5 font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+              Sent
+            </div>
+            <pre className="m-0 whitespace-pre-wrap break-all">
+              {JSON.stringify(command.sent, null, 2)}
+            </pre>
+          </div>
+          <div>
+            <div className="mb-0.5 font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+              Response
+            </div>
+            <pre className="m-0 whitespace-pre-wrap break-all">
+              {command.response != null
+                ? JSON.stringify(command.response, null, 2)
+                : command.status === "timeout"
+                  ? "(timed out — no response)"
+                  : "(none)"}
+            </pre>
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CommandsSection({
+  commands,
+  showFeedback,
+}: {
+  commands: DebugCommandRecord[];
+  showFeedback: (msg: string, type?: "success" | "error") => void;
+}) {
+  if (!commands.length) {
+    return <p className="text-[12px] text-[var(--text-muted)]">No commands recorded yet.</p>;
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto pr-1">
+      <ColumnHeader
+        title="Last commands"
+        typeCount={commands.length}
+        onCopy={() =>
+          void copyColumn(
+            "Commands",
+            JSON.stringify({ commands }, null, 2),
+            showFeedback
+          )
+        }
+      />
+      <div className="flex flex-col gap-2">
+        {commands.map((command) => (
+          <CommandCard key={command.id} command={command} showFeedback={showFeedback} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DirectionSplitView({
   sentEvents,
   receivedEvents,
@@ -428,9 +593,10 @@ function DirectionSplitView({
 }
 
 export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
-  const [section, setSection] = useState<DebugSection>("lastByType");
+  const [section, setSection] = useState<DebugSection>("commands");
   const debug = state?.debug;
   const countsByType = debug?.countsByType ?? {};
+  const lastCommands = debug?.lastCommands ?? [];
 
   const unknownSent = useMemo(
     () => sortByEventType((debug?.unknownEvents ?? []).filter((event) => event.direction === "send")),
@@ -463,7 +629,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
     if (!debug) {
       return [];
     }
-    return sortByEventType(
+    return sortByEventName(
       Object.values(debug.lastByType).filter((event) => event.direction === "send")
     );
   }, [debug]);
@@ -472,7 +638,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
     if (!debug) {
       return [];
     }
-    return sortByEventType(
+    return sortByEventName(
       Object.values(debug.lastByType).filter((event) => event.direction === "receive")
     );
   }, [debug]);
@@ -573,6 +739,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
   };
 
   const counts = {
+    commands: lastCommands.length,
     unknown: unknownTypeCount,
     schema: schemaTypeCount,
     lastByType: lastByTypeSent.length + lastByTypeReceived.length,
@@ -628,6 +795,9 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
+        {section === "commands" ? (
+          <CommandsSection commands={lastCommands} showFeedback={showFeedback} />
+        ) : null}
         {section === "unknown" ? (
           <DirectionSplitView
             sentEvents={unknownSent}

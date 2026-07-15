@@ -8,9 +8,6 @@ import { buildLootSplitFingerprint as buildFingerprintFromProjections } from "..
 
 export const LOOT_SPLIT_HISTORY_LIMIT = 10;
 
-/** Re-exported from projections so existing imports keep working. */
-export { reconcileLootSplitProgress } from "../../projections/loot-split-progress";
-
 export function buildLootSplitFingerprint(splitter: PartyLootSplitter): string {
   return buildFingerprintFromProjections(splitter);
 }

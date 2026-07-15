@@ -10,7 +10,7 @@ export const huntTrafficFixtures = {
   huntLootItemDrops:
     "U0cFCgG1JAEAAAAAAAIAJAAwMTlmM2Y4Mi0xYmY4LTcwMDQtYmZiNy03NzdjZGU4NWU3OTgnAAAAAQAAAAIAAAAAACQAMDE5ZjNmODItMWJmOC03MDA0LWJmYjctNzkzN2JlZTZiYjU5HQMAAAEAAAACAAAAAAAAAA==",
 
-  /** Party/hunt entity UUID roster — not ground loot. */
+  /** Party/hunt entity UUID roster — not monster loot. */
   huntEntityUuidList:
     "U0cFCgAAAAYAJAAwMTlmNDhmMC1hMmUzLTczM2UtOTIxZC1kYWIxOWQzNDVmOWMkADAxOWY0OGRhLTM1N2MtNzMzZC1hZmUyLTZiYTViNTRlYWYyOSQAMDE5ZjQ4ZDItZTc2MC03MzNkLWE0NDUtMzk4MDdmNWIwYWU1JAAwMTlmNDhkMi02ZTQzLTczM2QtYTM4NC02NDg0MzczNTI4NWUkADAxOWY0OGQwLTI4ZWItNzMzZC05ZmZhLTgxMmJlM2Q4MzAyZCQAOTYyMDQzZTItYjVhNy00MTQwLThhYmEtNjZmYWJhZTVkZjc0",
 
@@ -83,14 +83,31 @@ export const expectedHuntEntityUuidList = [
 ] as const;
 
 export const expectedHuntLootDrops = [
-  { itemId: 39, amount: 1, groundUuid: "019f3f82-1bf8-7004-bfb7-777cde85e798" },
-  { itemId: 797, amount: 1, groundUuid: "019f3f82-1bf8-7004-bfb7-7937bee6bb59" },
+  {
+    itemId: 39,
+    amount: 1,
+    groundUuid: "019f3f82-1bf8-7004-bfb7-777cde85e798",
+    flagsA: 2,
+    flagsB: 0,
+    remainingUnits: 0,
+  },
+  {
+    itemId: 797,
+    amount: 1,
+    groundUuid: "019f3f82-1bf8-7004-bfb7-7937bee6bb59",
+    flagsA: 2,
+    flagsB: 0,
+    remainingUnits: 0,
+  },
 ] as const;
 
 export const expectedHuntLootStarterItemGrant = {
   itemId: 452,
   amount: 1,
   groundUuid: "019f4768-b4ed-7334-9488-be4c15dc9152",
+  flagsA: 2,
+  flagsB: 0,
+  remainingUnits: 0,
 } as const;
 
 export const expectedCombatDamage52 = {

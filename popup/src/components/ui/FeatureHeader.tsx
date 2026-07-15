@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { FeatureId } from "../../features";
 import { FEATURES } from "../../features";
 import {
@@ -24,10 +25,11 @@ interface FeatureHeaderProps {
   /** Sub-feature enable switch — shown when drilled in. */
   subToggle?: SubFeatureToggle;
   onSubToggleLocked?: () => void;
+  leadingAction?: ReactNode;
   action?: SubFeatureAction;
 }
 
-const FEATURE_HEADER_ICONS: Record<FeatureId, React.ReactNode> = {
+const FEATURE_HEADER_ICONS: Record<FeatureId, ReactNode> = {
   market: <MarketTabIcon className="inline-block h-3.5 w-3.5 shrink-0 text-[var(--gold-soft)]" />,
   loot: <LootTabIcon className="inline-block h-3.5 w-3.5 shrink-0 text-[var(--gold-soft)]" />,
   battle: <BattleTabIcon className="inline-block h-3.5 w-3.5 shrink-0 text-[var(--gold-soft)]" />,
@@ -46,6 +48,7 @@ export function FeatureHeader({
   onBack,
   subToggle,
   onSubToggleLocked,
+  leadingAction,
   action,
 }: FeatureHeaderProps) {
   const feature = FEATURES[featureId];
@@ -90,6 +93,7 @@ export function FeatureHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        {leadingAction}
         {action ? (
           <StonegyButton
             variant={action.variant ?? "secondary"}

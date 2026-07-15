@@ -4,7 +4,7 @@ import {
   stopFeatureSubFeatures,
   type FeatureStopLocalUpdates,
 } from "../features/stop-feature-automation";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import { sendBot } from "../api/bot";
 import { useFeatureMaster } from "./useFeatureMaster";
 

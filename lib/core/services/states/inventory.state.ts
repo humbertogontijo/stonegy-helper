@@ -1,5 +1,6 @@
 import { ReceiveMessageTypes } from "../../../protocol";
 import type { InventoryItemEntry } from "../../../binary/types";
+import { applyInventoryMonsterLootDrops } from "../../../inventory";
 import type { GameEvent } from "../../events/types";
 import { asStonegyMessage } from "../../events/normalize";
 import type { InventoryProjection } from "../../projections/types";
@@ -52,6 +53,14 @@ export class InventoryState extends DomainState {
   async onEvent(event: GameEvent): Promise<void> {
     if (event.kind === "inventory_snapshot") {
       this.items = event.data.items;
+      return;
+    }
+
+    if (event.kind === "monster_loot") {
+      const drops = event.data.drops;
+      if (drops?.length) {
+        this.items = applyInventoryMonsterLootDrops(this.items, drops);
+      }
       return;
     }
 

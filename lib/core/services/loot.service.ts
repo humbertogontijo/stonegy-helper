@@ -349,6 +349,8 @@ export class LootService extends Service {
           not_leader: "Only the party leader can split loot.",
           solo_party: "Loot split requires a party with 2+ members.",
           no_splitter: "No loot split data in party state.",
+          members_owe_leader:
+            "Loot split skipped — members still owe the leader (only leader transfers are automated).",
         };
         const error = errorByReason[skipReason] ?? "Loot split skipped.";
         updatePlayerState(session, "idling", error);
@@ -823,6 +825,8 @@ export class LootService extends Service {
           not_leader: "Only the party leader can split loot",
           solo_party: "Loot split requires a party with 2+ members",
           no_splitter: "No loot split data in party state",
+          members_owe_leader:
+            "Loot split skipped — members still owe the leader (only leader transfers are automated)",
         };
         updatePlayerState(session, "idling", statusByReason[splitSkip] ?? "Loot split skipped");
         trace.guard("split_eligible", false, splitSkip);

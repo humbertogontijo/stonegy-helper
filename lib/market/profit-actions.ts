@@ -7,12 +7,13 @@ import {
   enqueueOrExecuteItemSell,
   executeNpcQuickSell,
   type LootSellDeps,
-  type LootSellState,
 } from "../loot-sell";
+import type { LootSellState } from "../domain/loot-sell";
 import { findBuyMarketSellNpcOpportunities } from "./arbitrage";
 import { MARKET_ACTION_BURST_MS } from "./constants";
 import type { BotState, MarketBoughtItem, MarketMissedOffer } from "../types";
-import type { MarketOrder, MarketPricingOptions, MarketSnapshotData } from "./types";
+import type { MarketOrder, MarketSnapshotData } from "../protocol-messages";
+import type { MarketPricingOptions } from "./types";
 
 /** Loot-sell scope plus gold balance for buy sizing. */
 export type ProfitActionState = LootSellState & {

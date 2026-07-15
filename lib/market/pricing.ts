@@ -1,4 +1,5 @@
-import type { ItemMarketPrice, MarketPricingOptions, SellVenueComparison } from "./types";
+import type { ItemMarketPrice } from "../types";
+import type { MarketPricingOptions, SellVenueComparison } from "./types";
 
 export function marketTaxAmount(gross: number, taxPercent: number): number {
   if (gross <= 0 || taxPercent <= 0) {

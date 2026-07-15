@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { sendBot } from "../api/bot";
-import type { BotResponse, BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
+import type { BotResponse } from "../types/bot";
 
 export type RunActionOptions = {
   /** Skip the success toast (for background sync side-effects). */

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { getItemName } from "../../../../lib/items";
 import { sendBot } from "../../api/bot";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
 import { usePersistedField } from "../../hooks/usePersistedField";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";

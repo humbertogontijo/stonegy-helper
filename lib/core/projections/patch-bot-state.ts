@@ -22,6 +22,9 @@ export function patchBotState(state: BotState, patch: BotStatePatch): BotState {
     battlePreset: patch.battlePreset
       ? { ...state.battlePreset, ...patch.battlePreset }
       : state.battlePreset,
+    characterBattlePreset: patch.characterBattlePreset
+      ? { ...state.characterBattlePreset, ...patch.characterBattlePreset }
+      : state.characterBattlePreset,
     logs: patch.logs ?? state.logs,
   } as BotState;
 }

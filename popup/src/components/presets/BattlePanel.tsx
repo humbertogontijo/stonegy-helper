@@ -8,12 +8,13 @@ import {
   resolveBattleOptionFilter,
 } from "../../../../lib/battle-options";
 import {
-  DEFAULT_PARTY_POSITION,
+  formatActiveHuntSelectorLabel,
   getHuntLureOptions,
-  listHunts,
+  listHuntSelectorOptions,
   resolveLureId,
   resolvePartyPosition,
 } from "../../../../lib/hunts";
+import { decodeBossHuntId, decodeQuestHuntId } from "../../../../lib/hunt-ids";
 import {
   getHuntBattleSettings,
   patchHuntBattleByHuntId,
@@ -23,9 +24,10 @@ import {
   listInventoryEquipOptions,
   type EquipmentSlot,
 } from "../../../../lib/items";
+import { createBattlePreset } from "../../../../lib/presets";
+import type { AutoEquipSlot, BattlePreset, BotState, TilePosition } from "../../../../lib/types";
 import { sendBot } from "../../api/bot";
-import type { AutoEquipSlot, BattlePreset, BotState } from "../../types/bot";
-import { isHuntControlledByParent } from "../../features";
+import { isHuntControlledByParent, isLureControlledByTasks } from "../../features";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
 import { jsonEqual, usePersistedField } from "../../hooks/usePersistedField";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";
@@ -33,6 +35,7 @@ import { FeatureInputs } from "../ui/FeatureInputs";
 import { SubFeatureSection } from "../ui/SubFeatureSection";
 import type { SubFeatureBadge } from "../ui/FeatureHubNavigator";
 import { SplitSubFeatureDetail } from "../ui/FeatureHubNavigator";
+import { RefreshIconButton } from "../ui/RefreshIconButton";
 import { StonegySelect } from "../ui/StonegySelect";
 import { BattlePresetEditor } from "./BattlePresetEditor";
 import { PartyPositionGrid } from "./PartyPositionGrid";
@@ -44,7 +47,7 @@ interface BattlePanelProps {
   showFeedback: (msg: string, type?: "success" | "error") => void;
 }
 
-const hunts = listHunts();
+const huntSelectorEntries = listHuntSelectorOptions();
 
 const defaultPreset: BattlePreset = {
   selectedHeal: "",
@@ -67,6 +70,19 @@ const defaultPreset: BattlePreset = {
   },
 };
 
+function isBlankBattlePreset(preset: BattlePreset): boolean {
+  return (
+    !preset.selectedHeal &&
+    !preset.selectedHealSecondary &&
+    !preset.selectedHealTertiary &&
+    !preset.selectedHealQuaternary &&
+    !preset.selectedManaPotion &&
+    !preset.selectedArrow &&
+    !(preset.selectedSkills ?? []).some(Boolean) &&
+    !(preset.selectedSupportSkills ?? []).some(Boolean)
+  );
+}
+
 function deriveSpellMins(p: BattlePreset): string[] {
   return (p.selectedSkills ?? ["", "", "", ""]).map((skill, i) => {
     if (!skill || p.selectedSkillsMinCreatures?.[skill] == null) {
@@ -87,13 +103,28 @@ function isSoloPaladin(state: BotState | null | undefined): boolean {
 export function BattlePanel({ state, runAction, saveSettings, showFeedback }: BattlePanelProps) {
   const controlledByTasks = isHuntControlledByParent(state);
   const taskerHuntId = state?.settings.taskerTargetHuntId;
+  const activeHuntId = state?.hunt.activeHuntId ?? null;
+  const activeHuntTitle = state?.hunt.activeHuntTitle ?? null;
+  const inHunt = activeHuntId != null;
 
-  const remoteHuntId =
+  const configuredHuntId =
     controlledByTasks && taskerHuntId != null
-      ? String(taskerHuntId)
-      : state?.settings.selectedHuntId != null
-        ? String(state.settings.selectedHuntId)
-        : "";
+      ? taskerHuntId
+      : state?.settings.selectedHuntId ?? null;
+
+  // While in a boss/quest room, prefer the synthetic selected id so the selector
+  // lands on the catalog boss/quest entry instead of a colliding hunt id.
+  const remoteHuntId = inHunt
+    ? configuredHuntId != null &&
+      (decodeBossHuntId(configuredHuntId) != null ||
+        decodeQuestHuntId(configuredHuntId) != null)
+      ? String(configuredHuntId)
+      : activeHuntId != null
+        ? String(activeHuntId)
+        : ""
+    : configuredHuntId != null
+      ? String(configuredHuntId)
+      : "";
 
   const [selectedHuntId, setSelectedHuntId] = usePersistedField(
     remoteHuntId || undefined,
@@ -106,9 +137,15 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
   );
   const [autoLockLure, setAutoLockLure] = usePersistedField(state?.settings.autoLockLure, false);
 
-  const huntIdNum = selectedHuntId ? Number(selectedHuntId) : null;
+  // Battle config is keyed by the catalog/selected id (quest/boss synthetic ids
+  // included). While in a hunt the selector prefers that synthetic id when set.
+  const huntIdNum = inHunt
+    ? configuredHuntId
+    : selectedHuntId
+      ? Number(selectedHuntId)
+      : null;
   const huntIdForPosition =
-    huntIdNum ?? state?.hunt.activeHuntId ?? state?.settings.selectedHuntId ?? state?.party.currentHuntId ?? null;
+    huntIdNum ?? activeHuntId ?? state?.settings.selectedHuntId ?? state?.party.currentHuntId ?? null;
 
   const huntBattleMap = state?.settings.huntBattleByHuntId ?? {};
   const huntBattle = getHuntBattleSettings(
@@ -136,34 +173,51 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
   );
   const showAmmo = isSoloPaladin(state);
 
-  const remotePartyPosition = resolvePartyPosition(
-    huntIdForPosition,
+  const viewingActiveHunt = inHunt;
+
+  const configuredPartyPosition =
     huntBattle.partyPositionX != null && huntBattle.partyPositionY != null
       ? { x: huntBattle.partyPositionX, y: huntBattle.partyPositionY }
-      : DEFAULT_PARTY_POSITION
-  );
-  const [partyPosition, setPartyPosition] = usePersistedField(
-    remotePartyPosition ?? DEFAULT_PARTY_POSITION,
-    DEFAULT_PARTY_POSITION,
+      : null;
+  const livePartyPosition =
+    viewingActiveHunt &&
+    state?.hunt.currentPartyTileX != null &&
+    state?.hunt.currentPartyTileY != null
+      ? { x: state.hunt.currentPartyTileX, y: state.hunt.currentPartyTileY }
+      : null;
+  const remotePartyPosition =
+    state == null
+      ? undefined
+      : resolvePartyPosition(huntIdForPosition, configuredPartyPosition) ??
+        (viewingActiveHunt
+          ? resolvePartyPosition(huntIdForPosition, livePartyPosition)
+          : null);
+  const [partyPosition, setPartyPosition] = usePersistedField<TilePosition | null>(
+    remotePartyPosition,
+    null,
     jsonEqual
   );
 
+  const configuredLureId =
+    huntIdNum != null ? resolveLureId(huntIdNum, huntBattle.selectedLureId) : null;
+  const liveLureId =
+    viewingActiveHunt && activeHuntId != null
+      ? resolveLureId(activeHuntId, state?.hunt.currentLureId)
+      : null;
   const remoteLureId =
-    huntIdNum && state?.hunt.currentLureId != null
-      ? state.hunt.currentLureId
-      : huntIdNum
-        ? resolveLureId(huntIdNum, huntBattle.selectedLureId)
-        : null;
+    state == null ? undefined : configuredLureId ?? (viewingActiveHunt ? liveLureId : null);
   const [selectedLureId, setSelectedLureId] = usePersistedField(
-    remoteLureId != null ? String(remoteLureId) : undefined,
+    remoteLureId != null ? String(remoteLureId) : remoteLureId === null ? "" : undefined,
     ""
   );
 
-  const remotePreset = huntBattle.battlePreset ?? (huntIdNum != null ? state?.battlePreset : null);
+  const livePreset = viewingActiveHunt ? state?.characterBattlePreset ?? null : null;
+  const remotePreset =
+    state == null ? undefined : huntBattle.battlePreset ?? (viewingActiveHunt ? livePreset : null);
   const [preset, setPreset] = usePersistedField(remotePreset ?? undefined, defaultPreset, jsonEqual);
 
   const remoteSpellMins = useMemo(
-    () => (remotePreset ? deriveSpellMins(remotePreset) : undefined),
+    () => (remotePreset ? deriveSpellMins(remotePreset) : remotePreset === null ? ["2", "-1", "2", "-1"] : undefined),
     [remotePreset]
   );
   const [spellMins, setSpellMins] = usePersistedField(
@@ -197,22 +251,37 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
     ]
   );
 
-  const huntOptions = useMemo(
-    () => [
+  const huntOptions = useMemo(() => {
+    const options = [
       { value: "", label: controlledByTasks ? "Set by Tasks…" : "Select a hunt…" },
-      ...hunts.map((hunt) => {
-        const level = hunt.recommendedLevel ?? hunt.levelMin ?? "?";
-        return { value: String(hunt.id), label: `#${hunt.id} · ${hunt.title} (lvl ${level})` };
-      }),
-    ],
-    [controlledByTasks]
-  );
+      ...huntSelectorEntries.map((entry) => ({
+        value: String(entry.id),
+        label: entry.label,
+      })),
+    ];
+    // Live boss/quest rooms can reuse catalog hunt ids (e.g. Count of the Core
+    // boots as id 43, which is also "Lava Lurker"). Prefer the bootstrap title.
+    if (activeHuntId != null) {
+      const value = String(activeHuntId);
+      const liveLabel = formatActiveHuntSelectorLabel(activeHuntId, activeHuntTitle);
+      const existingIndex = options.findIndex((option) => option.value === value);
+      if (existingIndex === -1) {
+        options.splice(1, 0, { value, label: liveLabel });
+      } else if (activeHuntTitle) {
+        options[existingIndex] = { value, label: liveLabel };
+      }
+    }
+    return options;
+  }, [controlledByTasks, activeHuntId, activeHuntTitle]);
 
   const lureOptions = useMemo(() => {
     if (!huntIdNum) return [{ value: "", label: "Select a hunt first…" }];
     const options = getHuntLureOptions(huntIdNum);
     if (!options.length) return [{ value: "", label: "No lure options" }];
-    return options.map((id) => ({ value: String(id), label: String(id + 1) }));
+    return [
+      { value: "", label: "Select lure…" },
+      ...options.map((id) => ({ value: String(id), label: String(id + 1) })),
+    ];
   }, [huntIdNum]);
 
   const readBattlePreset = (): BattlePreset => {
@@ -229,11 +298,14 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
     if (huntIdNum == null) {
       return huntBattleMap;
     }
+    const nextPreset = readBattlePreset();
+    const battlePreset =
+      huntBattle.battlePreset != null || !isBlankBattlePreset(nextPreset) ? nextPreset : null;
     return patchHuntBattleByHuntId(huntBattleMap, huntIdNum, {
       partyPositionX: partyPosition?.x ?? null,
       partyPositionY: partyPosition?.y ?? null,
       selectedLureId: selectedLureId ? Number(selectedLureId) : null,
-      battlePreset: readBattlePreset(),
+      battlePreset,
       ...patch,
     });
   };
@@ -247,7 +319,11 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
       autoApplyPresets,
       autoPlacePartyPosition: autoPlacePosition,
       autoLockLure,
-      selectedHuntId: controlledByTasks ? taskerHuntId ?? huntIdNum : huntIdNum,
+      selectedHuntId: controlledByTasks
+        ? taskerHuntId ?? huntIdNum
+        : inHunt
+          ? configuredHuntId
+          : huntIdNum,
       huntBattleByHuntId: huntBattleOverride ?? buildHuntBattlePatch(),
       ...rest,
     };
@@ -322,7 +398,7 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
   };
 
   const handleHuntChange = (value: string) => {
-    if (controlledByTasks) return;
+    if (controlledByTasks || inHunt) return;
     setSelectedHuntId(value);
     const id = value ? Number(value) : null;
     if (id) {
@@ -334,8 +410,8 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
           : null
       );
       const lure = resolveLureId(id, nextBattle.selectedLureId);
-      if (resolved) setPartyPosition(resolved);
-      setSelectedLureId(String(lure));
+      setPartyPosition(resolved);
+      setSelectedLureId(lure != null ? String(lure) : "");
       if (nextBattle.battlePreset) {
         setPreset(nextBattle.battlePreset);
         setSpellMins(deriveSpellMins(nextBattle.battlePreset));
@@ -346,7 +422,8 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
       void savePreset({
         selectedHuntId: id,
         huntBattleByHuntId: patchHuntBattleByHuntId(huntBattleMap, id, {
-          ...(resolved ? { partyPositionX: resolved.x, partyPositionY: resolved.y } : {}),
+          partyPositionX: resolved?.x ?? null,
+          partyPositionY: resolved?.y ?? null,
           selectedLureId: lure,
         }),
       });
@@ -355,7 +432,23 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
     void savePreset({ selectedHuntId: null });
   };
 
-  const lureLockedByTasks = controlledByTasks;
+  const lureLockedByTasks = isLureControlledByTasks(state);
+
+  const loadPresetsFromGame = () => {
+    if (!state?.connection.connected) {
+      showFeedback("Not connected to the game", "error");
+      return;
+    }
+    if (huntIdNum == null) {
+      showFeedback("Select a hunt first", "error");
+      return;
+    }
+    const fromGame = createBattlePreset(state.characterBattlePreset);
+    setPreset(fromGame);
+    setSpellMins(deriveSpellMins(fromGame));
+    saveHuntBattle({ battlePreset: fromGame });
+    showFeedback("Loaded presets from game", "success");
+  };
 
   const positionBadge: SubFeatureBadge = autoPlacePosition ? "on" : "off";
   const lureBadge: SubFeatureBadge = lureLockedByTasks
@@ -374,7 +467,7 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
       <StonegySelect
         label="Hunt"
         value={selectedHuntId}
-        disabled={controlledByTasks}
+        disabled={controlledByTasks || inHunt}
         onChange={(e) => handleHuntChange(e.target.value)}
         options={huntOptions}
       />
@@ -491,7 +584,11 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
           },
           action: {
             label: "Lure now",
-            disabled: lureLockedByTasks || !state?.connection.connected || huntIdNum == null,
+            disabled:
+              lureLockedByTasks ||
+              !state?.connection.connected ||
+              huntIdNum == null ||
+              !selectedLureId,
             onClick: () => {
               if (lureLockedByTasks) {
                 showFeedback("Controlled by Tasks.", "error");
@@ -499,6 +596,10 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
               }
               if (huntIdNum == null) {
                 showFeedback("Select a hunt first", "error");
+                return;
+              }
+              if (!selectedLureId) {
+                showFeedback("Select a lure first", "error");
                 return;
               }
               void runAction(async () => {
@@ -524,6 +625,13 @@ export function BattlePanel({ state, runAction, saveSettings, showFeedback }: Ba
               void savePreset({ autoApplyPresets: checked });
             },
           },
+          leadingAction: (
+            <RefreshIconButton
+              label="Load presets from game"
+              disabled={!state?.connection.connected || huntIdNum == null}
+              onClick={loadPresetsFromGame}
+            />
+          ),
           action: {
             label: "Apply now",
             onClick: () =>

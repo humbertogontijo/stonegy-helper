@@ -1,9 +1,8 @@
-import { getHuntById } from "../../../../lib/hunts";
+import { getHuntById, isStartableHuntId } from "../../../../lib/hunts";
 import { sendBot } from "../../api/bot";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { isHuntControlledByParent } from "../../features";
 import { useFeatureMasterWithStop } from "../../hooks/useFeatureMasterWithStop";
-import { useLeaveHuntToggleCooldown } from "../../hooks/useLeaveHuntToggleCooldown";
 import { FeaturePanelLayout } from "../layout/FeaturePanelLayout";
 import { FeatureInputs } from "../ui/FeatureInputs";
 import type { SubFeatureBadge } from "../ui/FeatureHubNavigator";
@@ -22,9 +21,6 @@ export function HuntPanel({ state, runAction, saveSettings, showFeedback }: Hunt
   const controlledByTasks = isHuntControlledByParent(state);
 
   const saveCavebot = (overrides?: Record<string, unknown>) => saveSettings({ ...overrides });
-
-  const { toggleDisabled: leaveHuntToggleDisabled, runStopAfterLeaveHunt } =
-    useLeaveHuntToggleCooldown();
 
   const { masterOn, subsDisabled, handleMasterChange } = useFeatureMasterWithStop("hunt", {
     state,
@@ -51,10 +47,17 @@ export function HuntPanel({ state, runAction, saveSettings, showFeedback }: Hunt
         showFeedback("Select a hunt on the Battle tab first", "error");
         return;
       }
+      if (!isStartableHuntId(selectedHuntId)) {
+        showFeedback(
+          "Boss/quest maps can't be auto-started. Pick a catalog hunt on Battle.",
+          "error"
+        );
+        return;
+      }
       void runAction(() => sendBot("bot:start-auto-hunt", { huntId: selectedHuntId }));
       return;
     }
-    void runStopAfterLeaveHunt(state, runAction, () => sendBot("bot:stop-auto-hunt"));
+    void runAction(() => sendBot("bot:stop-auto-hunt"));
   };
 
   const autoHuntBadge: SubFeatureBadge = controlledByTasks
@@ -84,11 +87,7 @@ export function HuntPanel({ state, runAction, saveSettings, showFeedback }: Hunt
           locked: controlledByTasks,
           toggle: {
             checked: !!state?.settings.autoHuntEnabled,
-            disabled:
-              controlledByTasks ||
-              !state?.connection.connected ||
-              subsDisabled ||
-              leaveHuntToggleDisabled,
+            disabled: controlledByTasks || !state?.connection.connected || subsDisabled,
             onChange: handleAutoHuntToggle,
           },
           action: {
@@ -101,6 +100,13 @@ export function HuntPanel({ state, runAction, saveSettings, showFeedback }: Hunt
               }
               if (!selectedHuntId) {
                 showFeedback("Select a hunt on the Battle tab first", "error");
+                return;
+              }
+              if (!isStartableHuntId(selectedHuntId)) {
+                showFeedback(
+                  "Boss/quest maps can't be started here. Pick a catalog hunt on Battle.",
+                  "error"
+                );
                 return;
               }
               void runAction(() => sendBot("bot:start-hunt", { huntId: selectedHuntId }));

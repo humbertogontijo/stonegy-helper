@@ -30,6 +30,13 @@ export const WS_STATUS_RETRY_DELAY_MS = 400;
 export const WS_CLOSE_VERIFY_DELAY_MS = 300;
 export const WS_CLOSE_VERIFY_ATTEMPTS = 10;
 
+/** Auto-reconnect: reload game tab after a confirmed socket close. */
+export const AUTO_RECONNECT_MAX_ATTEMPTS = 5;
+export const AUTO_RECONNECT_BASE_DELAY_MS = 2_000;
+export const AUTO_RECONNECT_MAX_DELAY_MS = 60_000;
+export const AUTO_RECONNECT_CONNECT_POLL_MS = 500;
+export const AUTO_RECONNECT_CONNECT_WAIT_MS = 20_000;
+
 export const EXTENSION_URL_PREFIXES = [
   "chrome-extension://",
   "moz-extension://",

@@ -1,8 +1,12 @@
+import { matchesMarketSnapshotToRequest } from "./market/attribution";
 import type { MarketFilters } from "./types";
 import {
   ReceiveMessageTypes,
   SendMessageTypes,
-  type BattleConfigPayload,
+  type SelectArrowPayload,
+  type SelectHealPayload,
+  type SelectManaPotionPayload,
+  type SelectSkillsPayload,
   type SendMessageType,
   type SendPayloadMap,
   type StartTrainingPayload,
@@ -30,6 +34,8 @@ export {
   type HuntLureIdPayload,
   type HuntUpdateLurePayload,
   type HuntUpdatePlayersPayload,
+  type HuntPhaseUpdatePayload,
+  type BosstiaryUpdatePayload,
   type MarketCreateOrderPayload,
   type MarketGetSnapshotPayload,
   type MarketResolveOrderPayload,
@@ -51,6 +57,10 @@ export {
   type QuestTaskPayload,
   type QuickSellItemsPayload,
   type QuickSellSetPreferencesPayload,
+  type SelectArrowPayload,
+  type SelectHealPayload,
+  type SelectManaPotionPayload,
+  type SelectSkillsPayload,
   type ReceiveMessage,
   type ReceiveMessageType,
   type ReceivePayload,
@@ -78,45 +88,162 @@ export const DEFAULT_HUNT_SKILLS: Array<string | null> = [
   null,
 ];
 
-export const RequestResponseMap: Readonly<Record<string, string>> = {
-  [SendMessageTypes.AUTH]: ReceiveMessageTypes.SESSION_BOOTSTRAP,
-  [SendMessageTypes.PING]: ReceiveMessageTypes.PONG,
-  [SendMessageTypes.TRAINING_GET_SNAPSHOT]: ReceiveMessageTypes.TRAINING_BOOTSTRAP,
-  [SendMessageTypes.START_TRAINING]: ReceiveMessageTypes.TRAINING_BOOTSTRAP,
-  [SendMessageTypes.FINISH_TRAINING]: ReceiveMessageTypes.TRAINING_FINISHED,
-  [SendMessageTypes.PARTY_GET_SNAPSHOT]: ReceiveMessageTypes.PARTY_SNAPSHOT,
-  [SendMessageTypes.FRIENDS_GET_SNAPSHOT]: ReceiveMessageTypes.FRIENDS_SNAPSHOT,
-  [SendMessageTypes.TRADE_GET_SNAPSHOT]: ReceiveMessageTypes.TRADE_SNAPSHOT,
-  [SendMessageTypes.BLESS_GET_SNAPSHOT]: ReceiveMessageTypes.BLESS_SNAPSHOT,
-  [SendMessageTypes.QUEST_GET_SNAPSHOT]: ReceiveMessageTypes.TASKS_SNAPSHOT,
-  [SendMessageTypes.QUEST_DELIVER_MONSTER_TASK]: ReceiveMessageTypes.QUEST_ACTION_RESULT,
-  [SendMessageTypes.QUEST_CLAIM_REWARD]: ReceiveMessageTypes.QUEST_ACTION_RESULT,
-  [SendMessageTypes.QUEST_START_MONSTER_TASK]: ReceiveMessageTypes.QUEST_ACTION_RESULT,
-  [SendMessageTypes.START_HUNT]: ReceiveMessageTypes.HUNT_BOOTSTRAP,
-  [SendMessageTypes.LEAVE_HUNT]: ReceiveMessageTypes.HUNT_FINISHED,
-  [SendMessageTypes.PARTY_READY_CHECK_CONFIRM]: ReceiveMessageTypes.PARTY_SNAPSHOT,
-  [SendMessageTypes.PARTY_LEAVE]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.PARTY_CREATE]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.PARTY_ACCEPT_INVITE]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.PARTY_REJECT_INVITE]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.PARTY_DISBAND]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.PARTY_LOOT_SPLITTER_RESET]: ReceiveMessageTypes.PARTY_ACTION_RESULT,
-  [SendMessageTypes.GOLD_TRANSFER]: ReceiveMessageTypes.GOLD_TRANSFER_RESULT,
-  [SendMessageTypes.QUICK_SELL_ITEMS]: ReceiveMessageTypes.GOLD_BALANCE,
-  [SendMessageTypes.HUNT_LURE_ID]: ReceiveMessageTypes.HUNT_UPDATE_LURE,
-  [SendMessageTypes.UPDATE_BATTLE_CONFIG]: ReceiveMessageTypes.UPDATE_BATTLE_CONFIG,
-  [SendMessageTypes.MARKET_GET_SNAPSHOT]: ReceiveMessageTypes.MARKET_SNAPSHOT,
-  [SendMessageTypes.MARKET_CREATE_ORDER]: ReceiveMessageTypes.MARKET_ACTION_RESULT,
-  [SendMessageTypes.MARKET_RESOLVE_ORDER]: ReceiveMessageTypes.MARKET_ACTION_RESULT,
-  [SendMessageTypes.COIN_MARKET_GET_SNAPSHOT]: ReceiveMessageTypes.COIN_MARKET_SNAPSHOT,
-  [SendMessageTypes.GET_TASKS]: ReceiveMessageTypes.TASKS_SNAPSHOT,
-  [SendMessageTypes.RANKING_GET_SNAPSHOT]: ReceiveMessageTypes.RANKING_SNAPSHOT,
-  [SendMessageTypes.WHEEL_OF_DESTINY_GET_SNAPSHOT]: ReceiveMessageTypes.WHEEL_OF_DESTINY_SNAPSHOT,
-  [SendMessageTypes.NPC_CLAIM_STARTER_ITEM]: ReceiveMessageTypes.NPC_STARTER_ITEM_CLAIM_RESULT,
-  [SendMessageTypes.NPC_BUY_ITEM]: ReceiveMessageTypes.NPC_ITEM_SHOP_PURCHASE_RESULT,
-  [SendMessageTypes.APPEARANCE_SHOP_BUY]: ReceiveMessageTypes.APPEARANCE_SHOP_PURCHASE_RESULT,
-  [SendMessageTypes.HOUSE_PUBLIC_SNAPSHOT]: ReceiveMessageTypes.HOUSE_PUBLIC_SNAPSHOT,
-  [SendMessageTypes.ADD_DAILY_BOSS]: ReceiveMessageTypes.BOSS_ROTATION_UPDATE,
+export type RequestResponseMatchArgs = {
+  request: { type: string; data?: unknown };
+  response: StonegyMessage;
+};
+
+export type RequestResponseEntry = {
+  /** Receive type(s) that can settle this send (any match wins). */
+  response: string | readonly string[];
+  /**
+   * Deeper correlation after the type filter. Omit when type alone is enough.
+   * Receives the outbound request and inbound response.
+   */
+  match?: (args: RequestResponseMatchArgs) => boolean;
+};
+
+/** Type-only entry — any message of `response` settles the send. */
+function respond(response: string | readonly string[]): RequestResponseEntry {
+  return { response };
+}
+
+function readAction(message: { data?: unknown }): string | null {
+  const action = (message.data as Record<string, unknown> | undefined)?.action;
+  return typeof action === "string" ? action : null;
+}
+
+function readRequestId(message: { data?: unknown }): string | null {
+  const requestId = (message.data as Record<string, unknown> | undefined)?.requestId;
+  return typeof requestId === "string" ? requestId : null;
+}
+
+/** `*:action_result` entry correlated by payload `action`. */
+function actionResult(responseType: string, action: string): RequestResponseEntry {
+  return {
+    response: responseType,
+    match: ({ response }) => readAction(response) === action,
+  };
+}
+
+function normalizeResponseTypes(response: string | readonly string[]): readonly string[] {
+  return typeof response === "string" ? [response] : response;
+}
+
+export const RequestResponseMap: Readonly<Record<string, RequestResponseEntry>> = {
+  [SendMessageTypes.AUTH]: respond(ReceiveMessageTypes.SESSION_BOOTSTRAP),
+  [SendMessageTypes.PING]: respond(ReceiveMessageTypes.PONG),
+  [SendMessageTypes.TRAINING_GET_SNAPSHOT]: respond(ReceiveMessageTypes.TRAINING_BOOTSTRAP),
+  [SendMessageTypes.START_TRAINING]: respond(ReceiveMessageTypes.TRAINING_BOOTSTRAP),
+  [SendMessageTypes.FINISH_TRAINING]: respond(ReceiveMessageTypes.TRAINING_FINISHED),
+  [SendMessageTypes.PARTY_GET_SNAPSHOT]: respond(ReceiveMessageTypes.PARTY_SNAPSHOT),
+  [SendMessageTypes.FRIENDS_GET_SNAPSHOT]: respond(ReceiveMessageTypes.FRIENDS_SNAPSHOT),
+  [SendMessageTypes.TRADE_GET_SNAPSHOT]: respond(ReceiveMessageTypes.TRADE_SNAPSHOT),
+  [SendMessageTypes.BLESS_GET_SNAPSHOT]: respond(ReceiveMessageTypes.BLESS_SNAPSHOT),
+  [SendMessageTypes.BLESS_BUY]: actionResult(ReceiveMessageTypes.BLESS_ACTION_RESULT, "buy"),
+  [SendMessageTypes.QUEST_GET_SNAPSHOT]: respond(ReceiveMessageTypes.TASKS_SNAPSHOT),
+  [SendMessageTypes.QUEST_DELIVER_MONSTER_TASK]: actionResult(
+    ReceiveMessageTypes.QUEST_ACTION_RESULT,
+    "deliver_monster_task"
+  ),
+  [SendMessageTypes.QUEST_CLAIM_REWARD]: actionResult(
+    ReceiveMessageTypes.QUEST_ACTION_RESULT,
+    "claim_reward"
+  ),
+  [SendMessageTypes.QUEST_START_MONSTER_TASK]: actionResult(
+    ReceiveMessageTypes.QUEST_ACTION_RESULT,
+    "start_monster_task"
+  ),
+  // Failures arrive as party:action_result; success bootstraps the hunt.
+  [SendMessageTypes.START_HUNT]: {
+    response: [
+      ReceiveMessageTypes.PARTY_ACTION_RESULT,
+      ReceiveMessageTypes.HUNT_BOOTSTRAP,
+    ],
+    match: ({ response }) =>
+      response.type === ReceiveMessageTypes.HUNT_BOOTSTRAP ||
+      readAction(response) === "start_hunt",
+  },
+  [SendMessageTypes.LEAVE_HUNT]: respond(ReceiveMessageTypes.HUNT_FINISHED),
+  [SendMessageTypes.PARTY_READY_CHECK_CONFIRM]: {
+    response: ReceiveMessageTypes.PARTY_SNAPSHOT,
+    match: ({ request, response }) => {
+      const readyCheckId =
+        typeof (request.data as { readyCheckId?: unknown } | undefined)?.readyCheckId === "string"
+          ? (request.data as { readyCheckId: string }).readyCheckId
+          : null;
+      if (readyCheckId == null) {
+        return true;
+      }
+      const party = (response.data as { party?: { readyCheck?: { id?: string } | null } } | undefined)
+        ?.party;
+      const currentId = party?.readyCheck?.id;
+      // Cleared ready check = confirm applied; still-present id must match this confirm.
+      return currentId == null || currentId === readyCheckId;
+    },
+  },
+  [SendMessageTypes.PARTY_LEAVE]: actionResult(ReceiveMessageTypes.PARTY_ACTION_RESULT, "leave"),
+  [SendMessageTypes.PARTY_CREATE]: actionResult(ReceiveMessageTypes.PARTY_ACTION_RESULT, "create"),
+  [SendMessageTypes.PARTY_ACCEPT_INVITE]: actionResult(
+    ReceiveMessageTypes.PARTY_ACTION_RESULT,
+    "accept_invite"
+  ),
+  [SendMessageTypes.PARTY_REJECT_INVITE]: actionResult(
+    ReceiveMessageTypes.PARTY_ACTION_RESULT,
+    "reject_invite"
+  ),
+  [SendMessageTypes.PARTY_DISBAND]: actionResult(
+    ReceiveMessageTypes.PARTY_ACTION_RESULT,
+    "disband"
+  ),
+  [SendMessageTypes.PARTY_LOOT_SPLITTER_RESET]: actionResult(
+    ReceiveMessageTypes.PARTY_ACTION_RESULT,
+    "loot_splitter_reset"
+  ),
+  [SendMessageTypes.HUNT_CHANGE_PARTY_POSITION]: actionResult(
+    ReceiveMessageTypes.PARTY_ACTION_RESULT,
+    "change_position"
+  ),
+  [SendMessageTypes.GOLD_TRANSFER]: {
+    response: ReceiveMessageTypes.GOLD_TRANSFER_RESULT,
+    match: ({ request, response }) => {
+      const requestId = readRequestId(request);
+      return requestId != null && requestId === readRequestId(response);
+    },
+  },
+  [SendMessageTypes.QUICK_SELL_ITEMS]: respond(ReceiveMessageTypes.GOLD_BALANCE),
+  [SendMessageTypes.HUNT_LURE_ID]: respond(ReceiveMessageTypes.HUNT_UPDATE_LURE),
+  [SendMessageTypes.SELECT_ARROW]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
+  [SendMessageTypes.SELECT_HEAL]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
+  [SendMessageTypes.SELECT_MANA_POTION]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
+  [SendMessageTypes.SELECT_SKILLS]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
+  [SendMessageTypes.MARKET_GET_SNAPSHOT]: {
+    response: ReceiveMessageTypes.MARKET_SNAPSHOT,
+    match: ({ request, response }) => matchesMarketSnapshotToRequest(request, response),
+  },
+  [SendMessageTypes.MARKET_CREATE_ORDER]: actionResult(
+    ReceiveMessageTypes.MARKET_ACTION_RESULT,
+    "create_order"
+  ),
+  [SendMessageTypes.MARKET_RESOLVE_ORDER]: actionResult(
+    ReceiveMessageTypes.MARKET_ACTION_RESULT,
+    "resolve_order"
+  ),
+  [SendMessageTypes.COIN_MARKET_GET_SNAPSHOT]: respond(ReceiveMessageTypes.COIN_MARKET_SNAPSHOT),
+  [SendMessageTypes.GET_TASKS]: respond(ReceiveMessageTypes.TASKS_SNAPSHOT),
+  [SendMessageTypes.RANKING_GET_SNAPSHOT]: respond(ReceiveMessageTypes.RANKING_SNAPSHOT),
+  [SendMessageTypes.WHEEL_OF_DESTINY_GET_SNAPSHOT]: respond(
+    ReceiveMessageTypes.WHEEL_OF_DESTINY_SNAPSHOT
+  ),
+  [SendMessageTypes.NPC_CLAIM_STARTER_ITEM]: respond(
+    ReceiveMessageTypes.NPC_STARTER_ITEM_CLAIM_RESULT
+  ),
+  [SendMessageTypes.NPC_BUY_ITEM]: respond(ReceiveMessageTypes.NPC_ITEM_SHOP_PURCHASE_RESULT),
+  [SendMessageTypes.APPEARANCE_SHOP_BUY]: respond(
+    ReceiveMessageTypes.APPEARANCE_SHOP_PURCHASE_RESULT
+  ),
+  [SendMessageTypes.HOUSE_PUBLIC_SNAPSHOT]: respond(ReceiveMessageTypes.HOUSE_PUBLIC_SNAPSHOT),
+  [SendMessageTypes.ADD_DAILY_BOSS]: respond(ReceiveMessageTypes.BOSS_ROTATION_UPDATE),
 };
 
 export const AuthBootstrapReceiveTypes = [
@@ -136,8 +263,51 @@ export const AuthBootstrapReceiveTypes = [
   ReceiveMessageTypes.PARTY_SNAPSHOT,
 ] as const;
 
-export function getResponseTypeForSend(sendType: string): string | null {
+export function getRequestResponseEntry(sendType: string): RequestResponseEntry | null {
   return RequestResponseMap[sendType] ?? null;
+}
+
+export function getResponseTypesForSend(sendType: string): readonly string[] {
+  const entry = getRequestResponseEntry(sendType);
+  if (!entry) {
+    return [];
+  }
+  return normalizeResponseTypes(entry.response);
+}
+
+/** Primary (first) mapped response type, or null when the send has no waiter. */
+export function getResponseTypeForSend(sendType: string): string | null {
+  return getResponseTypesForSend(sendType)[0] ?? null;
+}
+
+export function formatResponseTypesForSend(sendType: string): string | null {
+  const types = getResponseTypesForSend(sendType);
+  return types.length > 0 ? types.join(" | ") : null;
+}
+
+/**
+ * Whether `response` settles `request` per {@link RequestResponseMap}:
+ * type membership, then the entry's optional `match` checker.
+ */
+export function matchResponse(
+  request: { type: string; data?: unknown },
+  response: StonegyMessage
+): boolean {
+  const entry = getRequestResponseEntry(request.type);
+  if (!entry) {
+    return false;
+  }
+
+  const types = normalizeResponseTypes(entry.response);
+  if (!types.includes(response.type)) {
+    return false;
+  }
+
+  if (!entry.match) {
+    return true;
+  }
+
+  return entry.match({ request, response });
 }
 
 export function buildMessage<T extends SendMessageType>(
@@ -262,8 +432,20 @@ export function huntLureIdMessage(lureId: number): string {
   return buildMessage(SendMessageTypes.HUNT_LURE_ID, { lureId });
 }
 
-export function updateBattleConfigMessage(config: BattleConfigPayload): string {
-  return buildMessage(SendMessageTypes.UPDATE_BATTLE_CONFIG, config);
+export function selectArrowMessage(data: SelectArrowPayload): string {
+  return buildMessage(SendMessageTypes.SELECT_ARROW, data);
+}
+
+export function selectHealMessage(data: SelectHealPayload): string {
+  return buildMessage(SendMessageTypes.SELECT_HEAL, data);
+}
+
+export function selectManaPotionMessage(data: SelectManaPotionPayload): string {
+  return buildMessage(SendMessageTypes.SELECT_MANA_POTION, data);
+}
+
+export function selectSkillsMessage(data: SelectSkillsPayload): string {
+  return buildMessage(SendMessageTypes.SELECT_SKILLS, data);
 }
 
 export function chatSendMessage(channel: string, message: string): string {
@@ -325,7 +507,7 @@ export function questDeliverMonsterTaskMessage(questId: number, missionId: numbe
 export function questClaimRewardMessage(
   questId: number,
   missionId: number,
-  selectedChoiceId: number | null = null
+  selectedChoiceId: number | string | null = null
 ): string {
   return buildMessage(SendMessageTypes.QUEST_CLAIM_REWARD, {
     questId,

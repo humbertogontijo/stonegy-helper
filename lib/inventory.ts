@@ -94,6 +94,64 @@ export function inventoryItemsFromAmounts(
   return items;
 }
 
+type MonsterLootInventoryDrop = {
+  groundUuid: string;
+  itemId: number;
+  amount: number;
+  flagsA?: number;
+  flagsB?: number;
+  remainingUnits?: number;
+};
+
+/**
+ * Apply monster_loot drops as incremental inventory gains.
+ * `amount` is how many were just looted (added to existing stacks).
+ * Prefers decoded flags/remainingUnits from the wire when present.
+ */
+export function applyInventoryMonsterLootDrops(
+  items: InventoryItemEntry[],
+  drops: MonsterLootInventoryDrop[]
+): InventoryItemEntry[] {
+  const next = items.map((item) => ({ ...item }));
+
+  for (const drop of drops) {
+    const { groundUuid, itemId, amount } = drop;
+    if (!Number.isFinite(itemId) || itemId <= 0 || getItemById(itemId) == null) {
+      continue;
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000) {
+      continue;
+    }
+
+    const flagsA = typeof drop.flagsA === "number" ? drop.flagsA : 2;
+    const flagsB = typeof drop.flagsB === "number" ? drop.flagsB : 0;
+    const remainingUnits =
+      typeof drop.remainingUnits === "number"
+        ? drop.remainingUnits
+        : (flagsA >>> 16) & 0xffff;
+
+    // Merge into an existing stack with matching charge/timing state.
+    const existing = next.find(
+      (item) => item.itemId === itemId && getInventoryItemRemainingUnits(item) === remainingUnits
+    );
+    if (existing) {
+      existing.amount += amount;
+      continue;
+    }
+
+    next.push({
+      uuid: groundUuid || `loot-${itemId}`,
+      itemId,
+      amount,
+      flagsA,
+      flagsB,
+      remainingUnits,
+    });
+  }
+
+  return next;
+}
+
 /**
  * Remove sold amounts from inventory instances.
  * Prefers sellable (full charge/timing) instances first, then any remaining stacks.

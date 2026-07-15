@@ -9,7 +9,11 @@ type QuickSellSettings = Pick<
   | "lootSellModeByItemId"
   | "lootSellExcludedItemIds"
   | "marketSellMinRarityTier"
-  | "marketSellMountItems"
+  | "minRaritySellMode"
+  | "mountSellMode"
+  | "imbuementSellMode"
+  | "craftSellMode"
+  | "enchantSellMode"
 >;
 
 /**

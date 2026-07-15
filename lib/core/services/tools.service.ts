@@ -58,8 +58,6 @@ function isJsonEvent(event: GameEvent, type: string): boolean {
   return event.kind === "json" && event.message.type === type;
 }
 
-export { shouldCancelAutoTrainingIdleCheck, defaultAutoTrainingSkill };
-
 export class ToolsService extends Service {
   readonly id: FeatureId = "tools";
 

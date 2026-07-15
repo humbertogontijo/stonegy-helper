@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { AppTab, BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
+import type { AppTab } from "../../types/bot";
 import { FEATURES, FEATURE_TAB_ORDER, getFeatureStatus, getTabBadge, type FeatureId } from "../../features";
 import type { FeatureMasterMap } from "../../hooks/featureMasterStorage";
 import {

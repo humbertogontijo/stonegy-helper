@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import stonegyLogo from "../../assets/stonegy-logo.svg";
 import { resolveDisplayedStaminaMs } from "../../../../lib/stamina";
-import type { BotState } from "../../types/bot";
+import type { BotState } from "../../../../lib/types";
 import { formatGold, formatPlayerState, formatStamina, titleCase } from "../../utils/format";
 import { StonegyBadge } from "../ui/StonegyBadge";
 import { RefreshIconButton } from "../ui/RefreshIconButton";

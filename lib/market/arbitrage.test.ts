@@ -17,7 +17,7 @@ import {
   findBuyMarketSellNpcOpportunities,
   findSellBuyOrderVsNpcOpportunities,
 } from "./arbitrage";
-import type { ItemMarketPrice } from "./types";
+import type { ItemMarketPrice } from "../types";
 
 function price(
   itemId: number,

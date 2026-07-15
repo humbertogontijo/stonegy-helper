@@ -23,8 +23,20 @@ export const winterCourtTrafficFixtures = {
   /** Type 0x08 — entity_update subType=1. */
   entityUpdate: "U0cFCAEAAQQB5xmASZ8BAADnGYBJnwEAAA==",
 
-  /** Type 0x1a — ground_item_update subType=1, count=1. */
+  /** Type 0x1a — short tile ground_item_update (subType=1, count=1). */
   groundItemUpdate: "U0cFGoQAAAAAAAf/AQEBAP8AAf//Af//ADBCgEmfAQAA4C4AAA==",
+
+  /** Type 0x1a — short tile update (sub=0,count=0). Live 2026-07-14. */
+  groundItemUpdateShortTile:
+    "U0cFGoQAAAAAAAcBAAABAQH/AP//AP//AXcFoF6fAQAA+CoAAA==",
+
+  /** Type 0x1a — short tile update (sub=1,count=1). Live 2026-07-14. */
+  groundItemUpdateShortTileAlt:
+    "U0cFGoQAAAAAAAcBAQEAAP//AAH/AAH/AfwUpV6fAQAA+CoAAA==",
+
+  /** Type 0x1a — long inventory delta (2× Elvish Bow slots). Live 2026-07-14. */
+  groundItemUpdateInventory:
+    "U0cFGsSBk6FenwEAAAACfgF7AQAAAgGfXqFn13uyt74BS8MfdvN9ALl1EQEAAAAAAAGfXqFn13uyt73tJswx7f99ALl1EQEBAAAAAAcB//8AAAEBAAD///8BAae/oV6fAQAA+CoAAA==",
 
   /** Type 0x05 — classic-layout analyzer, 492 kills. */
   huntAnalyzerWinterCourt:
@@ -80,7 +92,18 @@ export const expectedWinterCourt = {
   combatDamage172: { attackerIndex: 1, targetIndex: 0, damageKind: 1412, amount: 172, flag: 1 },
   counterTriplet12Byte: { kind: 0, a: 125, b: 1853, c: 495 },
   entityUpdate: { subType: 1, indexA: 256, indexB: 260, entityRefCount: 2 },
-  groundItemUpdate: { subType: 1, count: 1 },
+  groundItemUpdate: {
+    subType: 1,
+    count: 1,
+    entityRef: "84000000000007ff",
+    extra: 12000,
+  },
+  groundItemUpdateInventory: {
+    count: 2,
+    itemIds: [125, 125],
+    amounts: [1, 1],
+    extra: 11000,
+  },
   huntAnalyzerWinterCourt: {
     totalKills: 492,
     rawXp: 123704,

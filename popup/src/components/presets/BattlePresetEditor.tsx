@@ -1,5 +1,5 @@
 import type { InventoryEquipOption } from "../../../../lib/items";
-import type { AutoEquipSlot, BattlePreset } from "../../types/bot";
+import type { AutoEquipSlot, BattlePreset } from "../../../../lib/types";
 import { readPercent } from "../../utils/format";
 import { SubFeatureSection } from "../ui/SubFeatureSection";
 import {

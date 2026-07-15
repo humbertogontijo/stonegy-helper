@@ -18,11 +18,13 @@ import {
 import {
   excludedItemIdsFromLootSellModes,
   isLootSellEnabled,
+  normalizeCategorySellMode,
   normalizeLootSellModes,
 } from "../../lib/domain/loot-sell";
 import { GAME_TAB_URLS, isStonegyGameUrl, queryGameTabs } from "../../lib/game-tab";
 import { BRIDGE_CHANNELS } from "../../lib/page-bridge/constants";
 import { pageBridgeSecretStorageKey } from "../../lib/page-bridge/constants";
+import { createAutoReconnectController } from "../../lib/page-bridge/auto-reconnect";
 import {
   confirmPageBridgeDisconnect,
   connectionSnapshotFromWsEvent,
@@ -37,6 +39,8 @@ import type { HuntService } from "../../lib/core/services/hunt.service";
 import type { LootService } from "../../lib/core/services/loot.service";
 import type { MarketService } from "../../lib/core/services/market.service";
 import { clearDebugTelemetry } from "../../lib/core/events/debug-telemetry";
+import { canArmFeature } from "../../lib/core/features/feature-control";
+import { isFeatureId } from "../../lib/core/services/types";
 import { initKeepAlive, syncKeepAlive } from "../../background/keep-alive";
 import {
   LAST_CHARACTER_ID_KEY,
@@ -103,6 +107,14 @@ export class ExtensionSessionHost {
   private characterSwitchChain = Promise.resolve();
   /** Only one game tab drives the session; other tabs' WS events are ignored. */
   private boundTabId: number | null = null;
+  /** True after at least one successful open socket for the current bind. */
+  private hadOpenSocket = false;
+  private autoReconnect = createAutoReconnectController({
+    delay,
+    isEnabled: () => this.session.settings.autoReconnectEnabled === true,
+    isConnected: () => this.session.view.connection.connected,
+    reloadTab: () => this.reloadGameTab(),
+  });
 
   async init(): Promise<void> {
     const stored = await chrome.storage.local.get(LAST_CHARACTER_ID_KEY);
@@ -143,6 +155,8 @@ export class ExtensionSessionHost {
     chrome.tabs.onRemoved.addListener((tabId) => {
       if (tabId === this.boundTabId) {
         this.boundTabId = null;
+        this.hadOpenSocket = false;
+        this.autoReconnect.cancel();
       }
     });
 
@@ -250,7 +264,21 @@ export class ExtensionSessionHost {
   }
 
   private bindTab(tabId: number): void {
+    if (this.boundTabId !== tabId) {
+      this.hadOpenSocket = false;
+      this.autoReconnect.cancel();
+    }
     this.boundTabId = tabId;
+  }
+
+  private async reloadGameTab(): Promise<boolean> {
+    const tab = await this.findGameTab();
+    if (!tab?.id) {
+      return false;
+    }
+    this.reloadGrace.begin();
+    await chrome.tabs.reload(tab.id);
+    return true;
   }
 
   private isBoundTab(tabId: number | null | undefined): boolean {
@@ -329,11 +357,22 @@ export class ExtensionSessionHost {
   }
 
   private applyConnection(connected: boolean, readyState: number): void {
+    if (connected) {
+      this.hadOpenSocket = true;
+      this.autoReconnect.cancel();
+    }
     this.transport.setConnection(connected, readyState);
     this.session.view = patchSessionView(this.session.view, {
       connection: { connected, readyState },
     });
     this.broadcast();
+  }
+
+  private scheduleAutoReconnect(): void {
+    if (!this.hadOpenSocket || this.session.settings.autoReconnectEnabled !== true) {
+      return;
+    }
+    void this.autoReconnect.scheduleAfterDisconnect();
   }
 
   private async sendKeepAliveActivity(): Promise<void> {
@@ -445,7 +484,10 @@ export class ExtensionSessionHost {
         resolveTabId: async () => (await this.findGameTab())?.id,
         delay,
         onConnected: () => this.applyConnection(true, 1),
-        onDisconnected: () => this.applyConnection(false, 3),
+        onDisconnected: () => {
+          this.applyConnection(false, 3);
+          this.scheduleAutoReconnect();
+        },
       });
       return { ok: true };
     }
@@ -474,12 +516,11 @@ export class ExtensionSessionHost {
         return this.checkConnection();
 
       case "bot:reload-game-tab": {
-        const tab = await this.findGameTab({ rebind: true });
-        if (!tab?.id) {
+        await this.findGameTab({ rebind: true });
+        const reloaded = await this.reloadGameTab();
+        if (!reloaded) {
           return { ok: false, error: "No Stonegy tab found" };
         }
-        this.reloadGrace.begin();
-        await chrome.tabs.reload(tab.id);
         return { ok: true };
       }
 
@@ -711,6 +752,17 @@ export class ExtensionSessionHost {
       case "bot:set-feature-masters": {
         const patch = message.patch as Partial<FeatureMasters>;
         if (patch && typeof patch === "object") {
+          const current = this.session.services.getMasters();
+          const next: FeatureMasters = { ...current, ...patch };
+          for (const key of Object.keys(patch) as Array<keyof FeatureMasters>) {
+            if (!isFeatureId(key) || !patch[key]) {
+              continue;
+            }
+            const check = canArmFeature(key, next);
+            if (!check.ok) {
+              return { ok: false, error: check.error };
+            }
+          }
           await this.session.services.setMasters(patch);
           await saveFeatureMasters(
             this.activeCharacterId ?? this.session.view.character.characterId,
@@ -786,10 +838,26 @@ export class ExtensionSessionHost {
         message.marketSellMinRarityTier === undefined
           ? state.settings.marketSellMinRarityTier ?? 1
           : normalizeRarityBorderTier(Number(message.marketSellMinRarityTier)),
-      marketSellMountItems:
-        message.marketSellMountItems === undefined
-          ? state.settings.marketSellMountItems ?? false
-          : !!message.marketSellMountItems,
+      minRaritySellMode:
+        message.minRaritySellMode === undefined
+          ? state.settings.minRaritySellMode ?? "market"
+          : normalizeCategorySellMode(message.minRaritySellMode, true),
+      mountSellMode:
+        message.mountSellMode === undefined
+          ? state.settings.mountSellMode ?? "keep"
+          : normalizeCategorySellMode(message.mountSellMode),
+      imbuementSellMode:
+        message.imbuementSellMode === undefined
+          ? state.settings.imbuementSellMode ?? "keep"
+          : normalizeCategorySellMode(message.imbuementSellMode),
+      craftSellMode:
+        message.craftSellMode === undefined
+          ? state.settings.craftSellMode ?? "keep"
+          : normalizeCategorySellMode(message.craftSellMode),
+      enchantSellMode:
+        message.enchantSellMode === undefined
+          ? state.settings.enchantSellMode ?? "keep"
+          : normalizeCategorySellMode(message.enchantSellMode),
       marketUndercutGold:
         message.marketUndercutGold === undefined
           ? state.settings.marketUndercutGold
@@ -807,9 +875,11 @@ export class ExtensionSessionHost {
           ? state.settings.marketAutoBuyEnabled
           : !!message.marketAutoBuyEnabled,
       selectedHuntId:
-        message.selectedHuntId === null || message.selectedHuntId === undefined
+        message.selectedHuntId === undefined
           ? state.settings.selectedHuntId
-          : Number(message.selectedHuntId) || null,
+          : message.selectedHuntId === null
+            ? null
+            : Number(message.selectedHuntId) || null,
       autoPlacePartyPosition:
         message.autoPlacePartyPosition === undefined
           ? state.settings.autoPlacePartyPosition
@@ -830,10 +900,16 @@ export class ExtensionSessionHost {
         message.keepAliveEnabled === undefined
           ? state.settings.keepAliveEnabled
           : !!message.keepAliveEnabled,
+      autoReconnectEnabled:
+        message.autoReconnectEnabled === undefined
+          ? state.settings.autoReconnectEnabled
+          : !!message.autoReconnectEnabled,
       selectedTaskQuestId:
         message.selectedTaskQuestId === undefined
           ? state.settings.selectedTaskQuestId
           : Number(message.selectedTaskQuestId) || null,
+      taskerMaxLure:
+        message.taskerMaxLure === undefined ? state.settings.taskerMaxLure : !!message.taskerMaxLure,
       autoTrainingEnabled:
         message.autoTrainingEnabled === undefined
           ? state.settings.autoTrainingEnabled
@@ -852,6 +928,9 @@ export class ExtensionSessionHost {
     await this.session.services.get<MarketService>("market").syncMarketScannerAlarm();
     await syncKeepAlive();
     await this.syncPageKeepAliveConfig();
+    if (this.session.settings.autoReconnectEnabled !== true) {
+      this.autoReconnect.cancel();
+    }
     return { ok: true, state: this.state };
   }
 

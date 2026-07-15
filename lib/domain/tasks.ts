@@ -1,5 +1,6 @@
 import { HUNTS } from "../data/hunts";
 import { QUESTS } from "../data/quests";
+import { getMonsterById } from "../monsters";
 import type {
   ActiveMonsterTask,
   MonsterTaskQuestSummary,
@@ -126,11 +127,32 @@ export function isTaskComplete(task: ActiveMonsterTask): boolean {
   return false;
 }
 
+/** All kill counters for a quest’s active mission (missions can require multiple monsters). */
+export function getActiveTasksForQuest(
+  tasks: ActiveMonsterTask[],
+  questId: number
+): ActiveMonsterTask[] {
+  const forQuest = tasks.filter((task) => task.questId === questId);
+  if (forQuest.length <= 1) {
+    return forQuest;
+  }
+
+  // Prefer the incomplete mission when a snapshot still includes a finished sibling.
+  const incomplete = forQuest.filter((task) => !isTaskComplete(task));
+  const focusMissionId = (incomplete[0] ?? forQuest[0]).missionId;
+  return forQuest.filter((task) => task.missionId === focusMissionId);
+}
+
 export function getActiveTaskForQuest(
   tasks: ActiveMonsterTask[],
   questId: number
 ): ActiveMonsterTask | null {
-  return tasks.find((task) => task.questId === questId) ?? null;
+  return getActiveTasksForQuest(tasks, questId)[0] ?? null;
+}
+
+/** Mission is complete only when every monster kill requirement is met. */
+export function isMissionTasksComplete(tasks: ActiveMonsterTask[]): boolean {
+  return tasks.length > 0 && tasks.every(isTaskComplete);
 }
 
 export function resolveHuntForMission(mission: QuestMission): number | null {
@@ -234,16 +256,80 @@ export function resolveTaskHuntId(task: ActiveMonsterTask | null, level: number 
   return resolveHuntForMission(mission);
 }
 
-export function formatActiveTask(task: ActiveMonsterTask | null): string {
-  if (!task) {
-    return "No active task";
+/** Preview the hunt auto-tasker will use for a quest line (active task, else next unfinished mission). */
+export function previewTaskerHunt(
+  questId: number,
+  options: {
+    activeTasks: ActiveMonsterTask[];
+    finishedTaskIds?: number[];
+    level?: number | null;
+  }
+): {
+  activeTasks: ActiveMonsterTask[];
+  activeTask: ActiveMonsterTask | null;
+  mission: QuestMission | null;
+  huntId: number | null;
+} {
+  const activeTasks = getActiveTasksForQuest(options.activeTasks, questId);
+  const activeTask = activeTasks[0] ?? null;
+  if (activeTask) {
+    const mission = getMission(questId, activeTask.missionId) ?? null;
+    return {
+      activeTasks,
+      activeTask,
+      mission,
+      huntId: resolveTaskHuntId(activeTask, options.level ?? null),
+    };
   }
 
-  const title = task.missionTitle ?? `Mission ${task.missionId}`;
+  const mission = findNextMonsterMission(questId, {
+    finishedTaskIds: options.finishedTaskIds,
+    level: options.level,
+  });
+
+  return {
+    activeTasks: [],
+    activeTask: null,
+    mission,
+    huntId: mission ? resolveHuntForMission(mission) : null,
+  };
+}
+
+export function formatMonsterTaskProgress(task: ActiveMonsterTask): string {
+  const monster =
+    task.monsterId != null
+      ? (getMonsterById(task.monsterId)?.name ?? `Monster #${task.monsterId}`)
+      : "Monster";
   const progress =
     task.currentAmount != null && task.requiredAmount != null
       ? `${task.currentAmount}/${task.requiredAmount}`
       : "?/?";
 
-  return `${title} · ${progress}`;
+  return `${monster} · ${progress}`;
+}
+
+export function formatActiveTasks(tasks: ActiveMonsterTask[]): string {
+  if (!tasks.length) {
+    return "No active task";
+  }
+
+  return tasks.map(formatMonsterTaskProgress).join(", ");
+}
+
+export function formatActiveTask(task: ActiveMonsterTask | null): string {
+  if (!task) {
+    return "No active task";
+  }
+
+  return formatActiveTasks([task]);
+}
+
+/** True when status still reflects a prior claim rather than the current incomplete task. */
+export function isStaleClaimTaskerStatus(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  return (
+    normalized.includes("recompensa resgatada") ||
+    normalized.includes("reward claimed") ||
+    /claimed.+\bnext\b/.test(normalized)
+  );
 }

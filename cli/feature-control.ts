@@ -1,5 +1,5 @@
 import { FEATURES, FEATURE_TAB_ORDER } from "../lib/core/features/instances";
-import { getFeatureMasterOffPatch } from "../lib/core/features/feature-control";
+import { getFeatureMasterOffPatch, canArmFeature } from "../lib/core/features/feature-control";
 import type { HuntService } from "../lib/core/services/hunt.service";
 import type { TasksService } from "../lib/core/services/tasks.service";
 import type { FeatureId, SubFeatureId } from "../lib/core/services/types";
@@ -15,7 +15,6 @@ function huntService(session: GameSession): HuntService {
 function tasksService(session: GameSession): TasksService {
   return session.services.get<TasksService>("tasks");
 }
-export type { FeatureId, SubFeatureId, FeatureMasterMap };
 
 export interface FeatureControlContext {
   session: GameSession;
@@ -33,20 +32,8 @@ export function isHuntControlledByParent(state: BotState): boolean {
   return !!state.settings.autoTaskerEnabled;
 }
 
-export function canArmFeature(
-  featureId: FeatureId,
-  masters: FeatureMasterMap
-): { ok: true } | { ok: false; error: string } {
-  const feature = FEATURES[featureId];
-  for (const dep of feature.dependsOn) {
-    if (!masters[dep]) {
-      return {
-        ok: false,
-        error: `Arm ${FEATURES[dep].label} first — ${feature.label} depends on it.`,
-      };
-    }
-  }
-  return { ok: true };
+export function isLureControlledByTasks(state: BotState): boolean {
+  return !!state.settings.autoTaskerEnabled && !!state.settings.taskerMaxLure;
 }
 
 export function isSubFeatureLocked(
@@ -68,7 +55,7 @@ export function isSubFeatureLocked(
   if (subFeature.featureId === "hunt" && isHuntControlledByParent(state)) {
     return subFeatureId === "hunt.autoHunt";
   }
-  if (subFeatureId === "battle.lockLure" && isHuntControlledByParent(state)) {
+  if (subFeatureId === "battle.lockLure" && isLureControlledByTasks(state)) {
     return true;
   }
 
@@ -210,7 +197,11 @@ export function collectPersistedSettings(ctx: FeatureControlContext): Partial<Se
     autoSplitLootOnHuntFinished: state.settings.autoSplitLootOnHuntFinished,
     autoSellLoot: state.settings.autoSellLoot,
     marketSellMinRarityTier: state.settings.marketSellMinRarityTier,
-    marketSellMountItems: state.settings.marketSellMountItems,
+    minRaritySellMode: state.settings.minRaritySellMode,
+    mountSellMode: state.settings.mountSellMode,
+    imbuementSellMode: state.settings.imbuementSellMode,
+    craftSellMode: state.settings.craftSellMode,
+    enchantSellMode: state.settings.enchantSellMode,
     marketScanEnabled: state.settings.marketScanEnabled,
     marketScanIntervalSec: state.settings.marketScanIntervalSec,
     marketAutoBuyEnabled: state.settings.marketAutoBuyEnabled,
@@ -221,6 +212,7 @@ export function collectPersistedSettings(ctx: FeatureControlContext): Partial<Se
     autoApplyPresets: state.settings.autoApplyPresets,
     huntBattleByHuntId: state.settings.huntBattleByHuntId,
     autoTaskerEnabled: state.settings.autoTaskerEnabled,
+    taskerMaxLure: state.settings.taskerMaxLure,
     selectedTaskQuestId: state.settings.selectedTaskQuestId,
     autoTrainingEnabled: state.settings.autoTrainingEnabled,
     autoTrainingSkillToTrain: state.settings.autoTrainingSkillToTrain,

@@ -4,7 +4,7 @@ import {
   type BattleOptionAssetKind,
 } from "../../../../lib/battle-option-assets";
 import type { InventoryEquipOption } from "../../../../lib/items";
-import type { AutoEquipSlot } from "../../types/bot";
+import type { AutoEquipSlot } from "../../../../lib/types";
 import { readPercent } from "../../utils/format";
 import { StonegyToggle } from "../ui/StonegyToggle";
 

@@ -11,9 +11,8 @@ import {
   setFeatureMaster,
   setSubFeatureEnabled,
   type FeatureControlContext,
-  type FeatureMasterMap,
 } from "../feature-control";
-import { saveCharacterConfig, type CliCharacterConfig } from "../config";
+import { saveCharacterConfig, type CliCharacterConfig, type FeatureMasterMap } from "../config";
 
 async function persistConfig(
   characterId: string,

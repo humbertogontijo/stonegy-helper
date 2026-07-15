@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SubFeatureId } from "../types";
+import type { SubFeatureId } from "../../services/types";
 import { FEATURES, FEATURE_TAB_ORDER, SUB_FEATURES } from "./index";
 
 const ALL_SUB_FEATURE_IDS: SubFeatureId[] = [

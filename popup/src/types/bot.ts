@@ -1,28 +1,14 @@
-import type {
-  AutoEquipSlot,
-  BattlePreset,
-  BotState,
-  DebugEventRecord,
-  DebugTypeStats,
-  FlowTrace,
-  LogEntry,
-} from "../../../lib/types";
-
-export type {
-  AutoEquipSlot,
-  BattlePreset,
-  BotState,
-  DebugEventRecord,
-  DebugTypeStats,
-  FlowTrace,
-  LogEntry,
-};
+import type { BotState } from "../../../lib/types";
 
 export interface LootSettings {
   autoSellLoot: boolean;
   marketUndercutGold: number;
   marketSellMinRarityTier: number;
-  marketSellMountItems: boolean;
+  minRaritySellMode: string;
+  mountSellMode: string;
+  imbuementSellMode: string;
+  craftSellMode: string;
+  enchantSellMode: string;
   lootSellModeByItemId: Record<number, string>;
 }
 

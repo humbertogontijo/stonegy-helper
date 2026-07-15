@@ -160,7 +160,7 @@ describe("hunt-control", () => {
     expect(session.settings.autoTaskerEnabled).toBe(true);
   });
 
-  it("leaves hunt when stopping auto hunt while actively hunting", async () => {
+  it("stops auto hunt without leaving an active hunt", async () => {
     const session = connectedSession();
     session.settings = { ...session.settings, autoHuntEnabled: true };
     session.view = patchSessionView(session.view, {
@@ -173,26 +173,26 @@ describe("hunt-control", () => {
 
     const result = await session.services.get<HuntService>("hunt").disableAutoHunt();
 
-    expect(leaveSpy).toHaveBeenCalled();
+    expect(leaveSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
     expect(session.settings.autoHuntEnabled).toBe(false);
   });
 
-  it("disables auto hunt even when leave hunt times out", async () => {
+  it("stops auto tasker without leaving an active hunt", async () => {
     const session = connectedSession();
-    session.settings = { ...session.settings, autoHuntEnabled: true };
+    session.settings = { ...session.settings, autoTaskerEnabled: true };
     session.view = patchSessionView(session.view, {
       party: { ...session.view.party, partyStatus: "hunting" },
       hunt: { ...session.view.hunt, activeHuntId: 42 },
     });
-    vi.spyOn(session.services.get<HuntService>("hunt"), "leaveHuntIfActive").mockResolvedValue({
-      left: false,
-      error: "Timed out waiting for hunt_finished (leave_hunt)",
-    });
+    const leaveSpy = vi
+      .spyOn(session.services.get<HuntService>("hunt"), "leaveHuntIfActive")
+      .mockResolvedValue({ left: true });
 
-    const result = await session.services.get<HuntService>("hunt").disableAutoHunt();
+    const result = await session.services.get<TasksService>("tasks").disableAutoTasker();
 
+    expect(leaveSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(session.settings.autoTaskerEnabled).toBe(false);
   });
 });

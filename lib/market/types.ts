@@ -1,7 +1,4 @@
-import type { ItemMarketPrice, MarketFilters } from "../types";
-
-export type { ItemMarketPrice, MarketFilters };
-export type { MarketOrder, MarketSnapshotData } from "../protocol-messages";
+import type { ItemMarketPrice } from "../types";
 
 export interface MarketPricesCache {
   prices: Record<number, ItemMarketPrice>;

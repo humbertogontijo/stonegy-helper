@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { FeatureId } from "../features";
-import type { BotState } from "../types/bot";
+import type { BotState } from "../../../lib/types";
 import { readFeatureMaster } from "./featureMasterStorage";
 
 /** Master switch UI state derived from BotState (session registry). */

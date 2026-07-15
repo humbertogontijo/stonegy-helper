@@ -1,4 +1,5 @@
-import type { ItemMarketPrice, MarketOrder, MarketSnapshotData } from "./types";
+import type { ItemMarketPrice } from "../types";
+import type { MarketOrder, MarketSnapshotData } from "../protocol-messages";
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;

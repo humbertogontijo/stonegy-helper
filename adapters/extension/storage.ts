@@ -1,10 +1,10 @@
 import { defaultFeatureMasters } from "../../lib/core/features/feature-control";
-import type { FeatureId } from "../../lib/core/features/types";
-import type { FeatureMasters } from "../../lib/core/services/types";
+import type { FeatureId, FeatureMasters } from "../../lib/core/services/types";
 import { createBattlePreset } from "../../lib/presets";
 import {
   excludedItemIdsFromLootSellModes,
   isLootSellEnabled,
+  normalizeCategorySellMode,
   normalizeLootSellModes,
 } from "../../lib/domain/loot-sell";
 import {
@@ -135,7 +135,12 @@ export async function loadPersistedSettings(characterId?: string | null): Promis
   }
 
   if (stored[settingsKey] && typeof stored[settingsKey] === "object") {
-    const raw = stored[settingsKey] as Partial<Settings>;
+    const raw = stored[settingsKey] as Partial<Settings> & {
+      marketMountItems?: boolean;
+      marketImbuementItems?: boolean;
+      marketCraftItems?: boolean;
+      marketEnchantItems?: boolean;
+    };
     const lootSellModeByItemId = normalizeLootSellModes(
       (raw.lootSellModeByItemId as Record<number, string> | undefined) ?? {}
     );
@@ -152,7 +157,14 @@ export async function loadPersistedSettings(characterId?: string | null): Promis
       lootSellModeByItemId,
       lootSellExcludedItemIds: excludedItemIdsFromLootSellModes(lootSellModeByItemId),
       marketSellMinRarityTier: raw.marketSellMinRarityTier ?? 1,
-      marketSellMountItems: raw.marketSellMountItems ?? false,
+      minRaritySellMode: normalizeCategorySellMode(raw.minRaritySellMode, true),
+      mountSellMode: normalizeCategorySellMode(raw.mountSellMode, !!raw.marketMountItems),
+      imbuementSellMode: normalizeCategorySellMode(
+        raw.imbuementSellMode,
+        !!raw.marketImbuementItems
+      ),
+      craftSellMode: normalizeCategorySellMode(raw.craftSellMode, !!raw.marketCraftItems),
+      enchantSellMode: normalizeCategorySellMode(raw.enchantSellMode, !!raw.marketEnchantItems),
       marketTaxPercent: raw.marketTaxPercent,
       marketUndercutGold: raw.marketUndercutGold,
       marketScanEnabled: raw.marketScanEnabled,
@@ -166,7 +178,9 @@ export async function loadPersistedSettings(characterId?: string | null): Promis
       huntBattleByHuntId: normalizeHuntBattleByHuntId(raw.huntBattleByHuntId),
       loggingEnabled: raw.loggingEnabled,
       keepAliveEnabled: raw.keepAliveEnabled,
+      autoReconnectEnabled: raw.autoReconnectEnabled,
       autoTaskerEnabled: raw.autoTaskerEnabled,
+      taskerMaxLure: raw.taskerMaxLure !== undefined ? !!raw.taskerMaxLure : settings.taskerMaxLure,
       selectedTaskQuestId: raw.selectedTaskQuestId,
       taskerPhase: raw.taskerPhase ?? settings.taskerPhase,
       taskerStatus: raw.taskerStatus ?? settings.taskerStatus,
@@ -221,7 +235,11 @@ export function pickPersistedSettings(state: BotState) {
     lootSellModeByItemId,
     lootSellExcludedItemIds: excludedItemIdsFromLootSellModes(lootSellModeByItemId),
     marketSellMinRarityTier: state.settings.marketSellMinRarityTier ?? 1,
-    marketSellMountItems: state.settings.marketSellMountItems ?? false,
+    minRaritySellMode: state.settings.minRaritySellMode ?? "market",
+    mountSellMode: state.settings.mountSellMode ?? "keep",
+    imbuementSellMode: state.settings.imbuementSellMode ?? "keep",
+    craftSellMode: state.settings.craftSellMode ?? "keep",
+    enchantSellMode: state.settings.enchantSellMode ?? "keep",
     marketTaxPercent: state.settings.marketTaxPercent,
     marketUndercutGold: state.settings.marketUndercutGold,
     marketScanEnabled: state.settings.marketScanEnabled,
@@ -235,7 +253,9 @@ export function pickPersistedSettings(state: BotState) {
     huntBattleByHuntId: state.settings.huntBattleByHuntId,
     loggingEnabled: state.settings.loggingEnabled,
     keepAliveEnabled: state.settings.keepAliveEnabled,
+    autoReconnectEnabled: state.settings.autoReconnectEnabled,
     autoTaskerEnabled: state.settings.autoTaskerEnabled,
+    taskerMaxLure: state.settings.taskerMaxLure,
     selectedTaskQuestId: state.settings.selectedTaskQuestId,
     taskerPhase: state.settings.taskerPhase,
     taskerStatus: state.settings.taskerStatus,

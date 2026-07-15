@@ -29,6 +29,7 @@ export const SendMessageTypes = {
   CHAT_SEND: "chat_send",
   WEAPON_MASTERY_GET_STATE: "weapon_mastery_get_state",
   WEAPON_MASTERY_SELECT_PERK: "weapon_mastery_select_perk",
+  WEAPON_MASTERY_RESET_PERKS: "weapon_mastery_reset_perks",
   TRAINING_GET_SNAPSHOT: "training_get_snapshot",
   START_TRAINING: "start_training",
   FINISH_TRAINING: "finish_training",
@@ -37,6 +38,10 @@ export const SendMessageTypes = {
   PARTY_GET_SNAPSHOT: "party_get_snapshot",
   FRIENDS_GET_SNAPSHOT: "friends_get_snapshot",
   TRADE_GET_SNAPSHOT: "trade_get_snapshot",
+  TRADE_INVITE: "trade_invite",
+  TRADE_RESPOND_INVITE: "trade_respond_invite",
+  TRADE_SET_OFFER: "trade_set_offer",
+  TRADE_SET_CONFIRM: "trade_set_confirm",
   BLESS_GET_SNAPSHOT: "bless_get_snapshot",
   BLESS_BUY: "bless_buy",
   DEATH_MODAL_ACK: "death_modal_ack",
@@ -47,6 +52,7 @@ export const SendMessageTypes = {
   START_HUNT: "start_hunt",
   LEAVE_HUNT: "leave_hunt",
   PARTY_READY_CHECK_CONFIRM: "party_ready_check_confirm",
+  PARTY_READY_CHECK_CANCEL: "party_ready_check_cancel",
   PARTY_LEAVE: "party_leave",
   PARTY_CREATE: "party_create",
   PARTY_ACCEPT_INVITE: "party_accept_invite",
@@ -56,6 +62,7 @@ export const SendMessageTypes = {
   GOLD_TRANSFER: "gold_transfer",
   HUNT_CHANGE_PARTY_POSITION: "hunt_change_party_position",
   HUNT_LURE_ID: "hunt_lure_id",
+  HUNT_SET_LOOT_FILTER: "hunt_set_loot_filter",
   QUICK_SELL_ITEMS: "quick_sell_items",
   QUICK_SELL_SET_PREFERENCES: "quick_sell_set_preferences",
   SELECT_ARROW: "select_arrow",
@@ -80,6 +87,7 @@ export const SendMessageTypes = {
   HOUSE_PUBLIC_SNAPSHOT: "house_public_snapshot",
   ADD_DAILY_BOSS: "add_daily_boss",
   START_BOSS_FIGHT: "start_boss_fight",
+  FORGE_HISTORY: "forge_history",
 } as const;
 
 export const ReceiveMessageTypes = {
@@ -101,6 +109,7 @@ export const ReceiveMessageTypes = {
   TRAINING_FINISHED: "training_finished",
   FRIENDS_SNAPSHOT: "friends:snapshot",
   TRADE_SNAPSHOT: "trade:snapshot",
+  TRADE_ACTION_RESULT: "trade:action_result",
   PARTY_SNAPSHOT: "party:snapshot",
   PARTY_ACTION_RESULT: "party:action_result",
   WEAPON_MASTERY_ACTION_RESULT: "weapon_mastery:action_result",
@@ -703,6 +712,44 @@ export const weaponMasterySelectPerkPayloadSchema = strictObject({
   perkId: z.string(),
 });
 
+export const weaponMasteryResetPerksPayloadSchema = strictObject({
+  weaponKey: z.string(),
+});
+
+export const forgeHistoryPayloadSchema = strictObject({
+  page: z.number(),
+});
+
+export const huntSetLootFilterPayloadSchema = strictObject({
+  excludedItemIds: z.array(z.number()),
+});
+
+export const tradeInvitePayloadSchema = strictObject({
+  targetCharacterId: z.string(),
+});
+
+export const tradeRespondInvitePayloadSchema = strictObject({
+  inviteId: z.string(),
+  accept: z.boolean(),
+});
+
+export const tradeOfferItemSchema = strictObject({
+  inventoryId: z.string(),
+  amount: z.number(),
+});
+
+export const tradeSetOfferPayloadSchema = strictObject({
+  tradeId: z.string(),
+  goldCoins: z.number(),
+  items: z.array(tradeOfferItemSchema),
+});
+
+export const tradeSetConfirmPayloadSchema = strictObject({
+  tradeId: z.string(),
+  confirmed: z.boolean(),
+  expectedOfferVersion: z.number(),
+});
+
 export const questTaskPayloadSchema = strictObject({
   questId: z.number(),
   missionId: z.number(),
@@ -916,6 +963,7 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.CHAT_SEND]: chatSendPayloadSchema,
   [SendMessageTypes.WEAPON_MASTERY_GET_STATE]: emptyPayloadSchema,
   [SendMessageTypes.WEAPON_MASTERY_SELECT_PERK]: weaponMasterySelectPerkPayloadSchema,
+  [SendMessageTypes.WEAPON_MASTERY_RESET_PERKS]: weaponMasteryResetPerksPayloadSchema,
   [SendMessageTypes.TRAINING_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.START_TRAINING]: startTrainingPayloadSchema,
   [SendMessageTypes.FINISH_TRAINING]: emptyPayloadSchema,
@@ -924,6 +972,10 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.PARTY_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.FRIENDS_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.TRADE_GET_SNAPSHOT]: emptyPayloadSchema,
+  [SendMessageTypes.TRADE_INVITE]: tradeInvitePayloadSchema,
+  [SendMessageTypes.TRADE_RESPOND_INVITE]: tradeRespondInvitePayloadSchema,
+  [SendMessageTypes.TRADE_SET_OFFER]: tradeSetOfferPayloadSchema,
+  [SendMessageTypes.TRADE_SET_CONFIRM]: tradeSetConfirmPayloadSchema,
   [SendMessageTypes.BLESS_GET_SNAPSHOT]: emptyPayloadSchema,
   [SendMessageTypes.BLESS_BUY]: blessBuyPayloadSchema,
   [SendMessageTypes.DEATH_MODAL_ACK]: emptyPayloadSchema,
@@ -934,6 +986,7 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.START_HUNT]: startHuntPayloadSchema,
   [SendMessageTypes.LEAVE_HUNT]: emptyPayloadSchema,
   [SendMessageTypes.PARTY_READY_CHECK_CONFIRM]: partyReadyCheckConfirmPayloadSchema,
+  [SendMessageTypes.PARTY_READY_CHECK_CANCEL]: emptyPayloadSchema,
   [SendMessageTypes.PARTY_LEAVE]: emptyPayloadSchema,
   [SendMessageTypes.PARTY_CREATE]: emptyPayloadSchema,
   [SendMessageTypes.PARTY_ACCEPT_INVITE]: partyInvitePayloadSchema,
@@ -943,6 +996,7 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.GOLD_TRANSFER]: goldTransferPayloadSchema,
   [SendMessageTypes.HUNT_CHANGE_PARTY_POSITION]: huntChangePartyPositionPayloadSchema,
   [SendMessageTypes.HUNT_LURE_ID]: huntLureIdPayloadSchema,
+  [SendMessageTypes.HUNT_SET_LOOT_FILTER]: huntSetLootFilterPayloadSchema,
   [SendMessageTypes.QUICK_SELL_ITEMS]: quickSellItemsPayloadSchema,
   [SendMessageTypes.QUICK_SELL_SET_PREFERENCES]: quickSellSetPreferencesPayloadSchema,
   [SendMessageTypes.SELECT_ARROW]: selectArrowPayloadSchema,
@@ -967,6 +1021,7 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.HOUSE_PUBLIC_SNAPSHOT]: housePublicSnapshotPayloadSchema,
   [SendMessageTypes.ADD_DAILY_BOSS]: bossIdPayloadSchema,
   [SendMessageTypes.START_BOSS_FIGHT]: bossIdPayloadSchema,
+  [SendMessageTypes.FORGE_HISTORY]: forgeHistoryPayloadSchema,
 } as const satisfies Record<SendMessageType, z.ZodType>;
 
 // ---------------------------------------------------------------------------
@@ -1152,6 +1207,7 @@ export const receivePayloadSchemas = {
   [ReceiveMessageTypes.TRAINING_FINISHED]: trainingFinishedSchema,
   [ReceiveMessageTypes.FRIENDS_SNAPSHOT]: friendsSnapshotSchema,
   [ReceiveMessageTypes.TRADE_SNAPSHOT]: tradeSnapshotSchema,
+  [ReceiveMessageTypes.TRADE_ACTION_RESULT]: actionResultPayloadSchema,
   [ReceiveMessageTypes.PARTY_SNAPSHOT]: partySnapshotSchema,
   [ReceiveMessageTypes.PARTY_ACTION_RESULT]: partyActionResultPayloadSchema,
   [ReceiveMessageTypes.WEAPON_MASTERY_ACTION_RESULT]: actionResultPayloadSchema,
@@ -1276,6 +1332,7 @@ export type GoldTransferResultPayload = z.infer<typeof goldTransferResultPayload
 export type GoldBalancePayload = z.infer<typeof goldBalancePayloadSchema>;
 export type HuntChangePartyPositionPayload = z.infer<typeof huntChangePartyPositionPayloadSchema>;
 export type HuntLureIdPayload = z.infer<typeof huntLureIdPayloadSchema>;
+export type HuntSetLootFilterPayload = z.infer<typeof huntSetLootFilterPayloadSchema>;
 export type QuickSellItemsPayload = z.infer<typeof quickSellItemsPayloadSchema>;
 export type QuickSellSetPreferencesPayload = z.infer<typeof quickSellSetPreferencesPayloadSchema>;
 export type SelectArrowPayload = z.infer<typeof selectArrowPayloadSchema>;
@@ -1304,6 +1361,14 @@ export type MarketResolveOrderPayload = z.infer<typeof marketResolveOrderPayload
 export type CoinMarketGetSnapshotPayload = z.infer<typeof coinMarketGetSnapshotPayloadSchema>;
 export type StartTrainingPayload = z.infer<typeof startTrainingPayloadSchema>;
 export type TrainingPresencePayload = z.infer<typeof trainingPresencePayloadSchema>;
+export type WeaponMasterySelectPerkPayload = z.infer<typeof weaponMasterySelectPerkPayloadSchema>;
+export type WeaponMasteryResetPerksPayload = z.infer<typeof weaponMasteryResetPerksPayloadSchema>;
+export type ForgeHistoryPayload = z.infer<typeof forgeHistoryPayloadSchema>;
+export type TradeInvitePayload = z.infer<typeof tradeInvitePayloadSchema>;
+export type TradeRespondInvitePayload = z.infer<typeof tradeRespondInvitePayloadSchema>;
+export type TradeOfferItem = z.infer<typeof tradeOfferItemSchema>;
+export type TradeSetOfferPayload = z.infer<typeof tradeSetOfferPayloadSchema>;
+export type TradeSetConfirmPayload = z.infer<typeof tradeSetConfirmPayloadSchema>;
 
 export type TrainingType = StartTrainingPayload["trainingType"];
 export type SkillToTrain = StartTrainingPayload["skillToTrain"];

@@ -1,4 +1,4 @@
-import { featureCooldown } from "../commands/cooldown";
+import { featureCooldown, isOnCooldown, LONG_COOLDOWN } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity } from "../humanize";
 import { shouldDeferHuntRestartForLootFinish } from "../../domain/hunt/guards";
 import { isLootSellEnabled } from "../../domain/loot-sell";
@@ -53,6 +53,9 @@ export class TasksService extends Service {
 
   /** Avoid stacking leave_hunt when get_tasks keeps confirming the mission is met. */
   private leavingHuntForTask = false;
+
+  /** Last mid-hunt get_tasks poll from monster_loot (debounced by LONG_COOLDOWN). */
+  private lastMonsterLootTasksPollAt: number | undefined;
 
   constructor(
     ctx: ServiceContext,
@@ -197,6 +200,12 @@ export class TasksService extends Service {
     if (!settings.autoTaskerEnabled || this.flow.phase !== "hunting") {
       return;
     }
+
+    const now = Date.now();
+    if (isOnCooldown(this.lastMonsterLootTasksPollAt, LONG_COOLDOWN, now)) {
+      return;
+    }
+    this.lastMonsterLootTasksPollAt = now;
 
     void this.ctx.session.commands.run(
       SendMessageTypes.GET_TASKS,

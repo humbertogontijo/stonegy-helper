@@ -139,6 +139,15 @@ export const RequestResponseMap: Readonly<Record<string, RequestResponseEntry>> 
   [SendMessageTypes.PARTY_GET_SNAPSHOT]: respond(ReceiveMessageTypes.PARTY_SNAPSHOT),
   [SendMessageTypes.FRIENDS_GET_SNAPSHOT]: respond(ReceiveMessageTypes.FRIENDS_SNAPSHOT),
   [SendMessageTypes.TRADE_GET_SNAPSHOT]: respond(ReceiveMessageTypes.TRADE_SNAPSHOT),
+  [SendMessageTypes.TRADE_INVITE]: respond(ReceiveMessageTypes.TRADE_SNAPSHOT),
+  [SendMessageTypes.TRADE_RESPOND_INVITE]: respond(ReceiveMessageTypes.TRADE_SNAPSHOT),
+  [SendMessageTypes.TRADE_SET_OFFER]: respond(ReceiveMessageTypes.TRADE_SNAPSHOT),
+  [SendMessageTypes.TRADE_SET_CONFIRM]: {
+    response: [
+      ReceiveMessageTypes.TRADE_SNAPSHOT,
+      ReceiveMessageTypes.TRADE_ACTION_RESULT,
+    ],
+  },
   [SendMessageTypes.BLESS_GET_SNAPSHOT]: respond(ReceiveMessageTypes.BLESS_SNAPSHOT),
   [SendMessageTypes.BLESS_BUY]: actionResult(ReceiveMessageTypes.BLESS_ACTION_RESULT, "buy"),
   [SendMessageTypes.QUEST_GET_SNAPSHOT]: respond(ReceiveMessageTypes.TASKS_SNAPSHOT),
@@ -182,6 +191,7 @@ export const RequestResponseMap: Readonly<Record<string, RequestResponseEntry>> 
       return currentId == null || currentId === readyCheckId;
     },
   },
+  [SendMessageTypes.PARTY_READY_CHECK_CANCEL]: respond(ReceiveMessageTypes.PARTY_SNAPSHOT),
   [SendMessageTypes.PARTY_LEAVE]: actionResult(ReceiveMessageTypes.PARTY_ACTION_RESULT, "leave"),
   [SendMessageTypes.PARTY_CREATE]: actionResult(ReceiveMessageTypes.PARTY_ACTION_RESULT, "create"),
   [SendMessageTypes.PARTY_ACCEPT_INVITE]: actionResult(
@@ -213,6 +223,7 @@ export const RequestResponseMap: Readonly<Record<string, RequestResponseEntry>> 
   },
   [SendMessageTypes.QUICK_SELL_ITEMS]: respond(ReceiveMessageTypes.GOLD_BALANCE),
   [SendMessageTypes.HUNT_LURE_ID]: respond(ReceiveMessageTypes.HUNT_UPDATE_LURE),
+  [SendMessageTypes.HUNT_SET_LOOT_FILTER]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
   [SendMessageTypes.SELECT_ARROW]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
   [SendMessageTypes.SELECT_HEAL]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
   [SendMessageTypes.SELECT_MANA_POTION]: respond(ReceiveMessageTypes.UPDATE_BATTLE_CONFIG),
@@ -397,6 +408,52 @@ export function coinMarketGetSnapshotMessage(
 
 export function partyReadyCheckConfirmMessage(readyCheckId: string): string {
   return buildMessage(SendMessageTypes.PARTY_READY_CHECK_CONFIRM, { readyCheckId });
+}
+
+export function partyReadyCheckCancelMessage(): string {
+  return buildMessage(SendMessageTypes.PARTY_READY_CHECK_CANCEL, {});
+}
+
+export function huntSetLootFilterMessage(excludedItemIds: number[]): string {
+  return buildMessage(SendMessageTypes.HUNT_SET_LOOT_FILTER, {
+    excludedItemIds: excludedItemIds.filter((itemId) => Number.isFinite(itemId) && itemId > 0),
+  });
+}
+
+export function forgeHistoryMessage(page = 0): string {
+  return buildMessage(SendMessageTypes.FORGE_HISTORY, { page });
+}
+
+export function tradeInviteMessage(targetCharacterId: string): string {
+  return buildMessage(SendMessageTypes.TRADE_INVITE, { targetCharacterId });
+}
+
+export function tradeRespondInviteMessage(inviteId: string, accept: boolean): string {
+  return buildMessage(SendMessageTypes.TRADE_RESPOND_INVITE, { inviteId, accept });
+}
+
+export function tradeSetOfferMessage(
+  tradeId: string,
+  goldCoins: number,
+  items: Array<{ inventoryId: string; amount: number }>
+): string {
+  return buildMessage(SendMessageTypes.TRADE_SET_OFFER, { tradeId, goldCoins, items });
+}
+
+export function tradeSetConfirmMessage(
+  tradeId: string,
+  confirmed: boolean,
+  expectedOfferVersion: number
+): string {
+  return buildMessage(SendMessageTypes.TRADE_SET_CONFIRM, {
+    tradeId,
+    confirmed,
+    expectedOfferVersion,
+  });
+}
+
+export function weaponMasteryResetPerksMessage(weaponKey: string): string {
+  return buildMessage(SendMessageTypes.WEAPON_MASTERY_RESET_PERKS, { weaponKey });
 }
 
 export function quickSellItemsMessage(

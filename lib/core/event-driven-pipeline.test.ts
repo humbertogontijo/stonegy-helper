@@ -5,6 +5,7 @@ import { defaultSessionView } from "./projections/defaults";
 import { patchSessionView } from "./projections/patch";
 import { ReceiveMessageTypes, SendMessageTypes, type StonegyMessage } from "../protocol";
 import type { Transport, WireMessage } from "./transport";
+import { LONG_COOLDOWN } from "./commands/cooldown";
 import { HuntService } from "./services/hunt.service";
 import { LootService } from "./services/loot.service";
 import { TasksService } from "./services/tasks.service";
@@ -312,7 +313,10 @@ describe("event-driven tasker pipeline", () => {
     );
   });
 
-  it("sends get_tasks on every monster_loot while hunting", async () => {
+  it("debounces get_tasks on monster_loot while hunting", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
     const transport = new RelayTransport();
     const session = leaderSession(transport, {
       autoTaskerEnabled: true,
@@ -332,20 +336,18 @@ describe("event-driven tasker pipeline", () => {
 
     await tasks.onEvent(lootEvent);
     await tasks.onEvent(lootEvent);
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.GET_TASKS,
+      {},
+      { force: true, waitForResponse: false }
+    );
 
+    vi.setSystemTime(LONG_COOLDOWN);
+    await tasks.onEvent(lootEvent);
     expect(runSpy).toHaveBeenCalledTimes(2);
-    expect(runSpy).toHaveBeenNthCalledWith(
-      1,
-      SendMessageTypes.GET_TASKS,
-      {},
-      { force: true, waitForResponse: false }
-    );
-    expect(runSpy).toHaveBeenNthCalledWith(
-      2,
-      SendMessageTypes.GET_TASKS,
-      {},
-      { force: true, waitForResponse: false }
-    );
+
+    vi.useRealTimers();
   });
 });
 

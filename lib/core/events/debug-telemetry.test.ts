@@ -562,6 +562,53 @@ describe("message payload schemas", () => {
     ).toBe("valid");
   });
 
+  it("accepts forge, loot filter, ready-check cancel, and trade protocol types", () => {
+    expect(validateMessagePayload("forge_history", "send", { page: 0 }).status).toBe("valid");
+    expect(
+      validateMessagePayload("hunt_set_loot_filter", "send", {
+        excludedItemIds: [49, 54, 169],
+      }).status
+    ).toBe("valid");
+    expect(validateMessagePayload("party_ready_check_cancel", "send", {}).status).toBe("valid");
+    expect(
+      validateMessagePayload("trade_invite", "send", {
+        targetCharacterId: "44444444-4444-4444-8444-444444444444",
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("trade_respond_invite", "send", {
+        inviteId: "55555555-5555-4555-8555-555555555555",
+        accept: true,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("trade_set_offer", "send", {
+        tradeId: "66666666-6666-4666-8666-666666666666",
+        goldCoins: 0,
+        items: [{ inventoryId: "77777777-7777-4777-8777-777777777777", amount: 1 }],
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("trade_set_confirm", "send", {
+        tradeId: "66666666-6666-4666-8666-666666666666",
+        confirmed: true,
+        expectedOfferVersion: 1,
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("weapon_mastery_reset_perks", "send", {
+        weaponKey: "weapon_884",
+      }).status
+    ).toBe("valid");
+    expect(
+      validateMessagePayload("trade:action_result", "receive", {
+        action: "completed",
+        success: true,
+        message: "Trade concluído com sucesso.",
+      }).status
+    ).toBe("valid");
+  });
+
   it("accepts select_* preset requests from live traffic", () => {
     expect(
       validateMessagePayload("select_arrow", "send", {
@@ -681,6 +728,42 @@ describe("debug-telemetry", () => {
 
     expect(snapshot.unknownEvents).toHaveLength(1);
     expect(snapshot.unknownEvents[0]?.unknownType).toBe(true);
+  });
+
+  it("keeps distinct unknown types when one type floods the buffer", () => {
+    const snapshot = emptyDebugTelemetry();
+
+    recordDebugWireMessage(
+      {
+        direction: "send",
+        opcode: 1,
+        data: JSON.stringify({ type: "server_surprise_client", data: { page: 0 } }),
+      },
+      snapshot
+    );
+
+    for (let i = 0; i < 150; i += 1) {
+      recordDebugWireMessage(
+        {
+          direction: "receive",
+          opcode: 1,
+          data: JSON.stringify({ type: "server_surprise", data: { n: i } }),
+        },
+        snapshot
+      );
+    }
+
+    expect(
+      snapshot.lastByType[lastByTypeKey("server_surprise_client", "send")]?.unknownType
+    ).toBe(true);
+    expect(
+      snapshot.unknownEvents.some(
+        (event) => event.eventKey === "server_surprise_client" && event.direction === "send"
+      )
+    ).toBe(true);
+    expect(
+      snapshot.unknownEvents.filter((event) => event.eventKey === "server_surprise")
+    ).toHaveLength(1);
   });
 
   it("does not flag equipment patch as unknown", () => {

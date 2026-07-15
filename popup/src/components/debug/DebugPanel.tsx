@@ -58,6 +58,28 @@ function sortByEventName(events: DebugEventRecord[]): DebugEventRecord[] {
   );
 }
 
+function isUnknownDebugEvent(event: DebugEventRecord): boolean {
+  return Boolean(event.unknownType || event.parseFailed);
+}
+
+function isSchemaDriftEvent(event: DebugEventRecord): boolean {
+  return Boolean(
+    event.schemaIssues?.length || event.extraFields?.length || event.trailingBytes
+  );
+}
+
+function eventsFromLastByType(
+  lastByType: Record<string, DebugEventRecord> | undefined,
+  direction: DebugEventRecord["direction"],
+  predicate: (event: DebugEventRecord) => boolean
+): DebugEventRecord[] {
+  return sortByEventType(
+    Object.values(lastByType ?? {}).filter(
+      (event) => event.direction === direction && predicate(event)
+    )
+  );
+}
+
 function groupEventsByType(events: DebugEventRecord[]): GroupedEvent[] {
   const grouped = new Map<string, GroupedEvent>();
 
@@ -598,31 +620,24 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
   const countsByType = debug?.countsByType ?? {};
   const lastCommands = debug?.lastCommands ?? [];
 
+  // Derive from lastByType so any event tagged unknown/schema-drift in "Last by type"
+  // cannot disappear from these tabs when occurrence buffers rotate.
   const unknownSent = useMemo(
-    () => sortByEventType((debug?.unknownEvents ?? []).filter((event) => event.direction === "send")),
-    [debug?.unknownEvents]
+    () => eventsFromLastByType(debug?.lastByType, "send", isUnknownDebugEvent),
+    [debug?.lastByType]
   );
   const unknownReceived = useMemo(
-    () =>
-      sortByEventType(
-        (debug?.unknownEvents ?? []).filter((event) => event.direction === "receive")
-      ),
-    [debug?.unknownEvents]
+    () => eventsFromLastByType(debug?.lastByType, "receive", isUnknownDebugEvent),
+    [debug?.lastByType]
   );
 
   const schemaSent = useMemo(
-    () =>
-      sortByEventType(
-        (debug?.schemaMismatchEvents ?? []).filter((event) => event.direction === "send")
-      ),
-    [debug?.schemaMismatchEvents]
+    () => eventsFromLastByType(debug?.lastByType, "send", isSchemaDriftEvent),
+    [debug?.lastByType]
   );
   const schemaReceived = useMemo(
-    () =>
-      sortByEventType(
-        (debug?.schemaMismatchEvents ?? []).filter((event) => event.direction === "receive")
-      ),
-    [debug?.schemaMismatchEvents]
+    () => eventsFromLastByType(debug?.lastByType, "receive", isSchemaDriftEvent),
+    [debug?.lastByType]
   );
 
   const lastByTypeSent = useMemo(() => {
@@ -803,7 +818,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
             sentEvents={unknownSent}
             receivedEvents={unknownReceived}
             countsByType={countsByType}
-            groupByType
+            groupByType={false}
             emptyLabel="None"
             showFeedback={showFeedback}
           />
@@ -813,7 +828,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
             sentEvents={schemaSent}
             receivedEvents={schemaReceived}
             countsByType={countsByType}
-            groupByType
+            groupByType={false}
             emptyLabel="None"
             showFeedback={showFeedback}
           />

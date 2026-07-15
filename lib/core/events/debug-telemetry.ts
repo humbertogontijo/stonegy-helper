@@ -309,17 +309,33 @@ function pushLimited<T>(list: T[], entry: T, max: number): void {
   }
 }
 
+/** Keep latest sample per eventKey+direction so high-volume types cannot flush others out. */
+function upsertLimitedByType(
+  list: DebugEventRecord[],
+  record: DebugEventRecord,
+  max: number
+): void {
+  const key = lastByTypeKey(record.eventKey, record.direction);
+  const existingIndex = list.findIndex(
+    (entry) => lastByTypeKey(entry.eventKey, entry.direction) === key
+  );
+  if (existingIndex >= 0) {
+    list.splice(existingIndex, 1);
+  }
+  pushLimited(list, record, max);
+}
+
 function appendDebugRecord(snapshot: DebugTelemetrySnapshot, record: DebugEventRecord): void {
   pushLimited(snapshot.events, record, MAX_DEBUG_EVENTS);
   incrementTypeCount(snapshot.countsByType, record.eventKey, record.direction);
   snapshot.lastByType[lastByTypeKey(record.eventKey, record.direction)] = record;
 
   if (record.unknownType || record.parseFailed) {
-    pushLimited(snapshot.unknownEvents, record, MAX_UNKNOWN_EVENTS);
+    upsertLimitedByType(snapshot.unknownEvents, record, MAX_UNKNOWN_EVENTS);
   }
 
   if (record.schemaIssues?.length || record.extraFields?.length || record.trailingBytes) {
-    pushLimited(snapshot.schemaMismatchEvents, record, MAX_SCHEMA_MISMATCH_EVENTS);
+    upsertLimitedByType(snapshot.schemaMismatchEvents, record, MAX_SCHEMA_MISMATCH_EVENTS);
   }
 }
 

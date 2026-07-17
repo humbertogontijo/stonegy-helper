@@ -171,16 +171,21 @@ Once connected, use the menu to:
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `package.json` and `manifest.json` to the same value.
-2. Commit the bump.
-3. Create and push a tag matching that version:
+Create and push a version tag. The release workflow syncs `package.json` and `manifest.json` from the tag before building, so zip names and the extension version match the tag (e.g. `v1.0.0` → `stonegy-helper-chrome-v1.0.0.zip`).
 
 ```bash
-git tag v1.2.1
-git push origin v1.2.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The [Release](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/release.yml) workflow builds Chrome, Firefox, and Safari artifacts and publishes a GitHub Release. You can also run it manually via **Actions → Release → Run workflow**.
+To bump versions locally (optional):
+
+```bash
+npm run set-version -- 1.0.0
+git add package.json manifest.json && git commit -m "chore: release v1.0.0"
+```
+
+The [Release](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/release.yml) workflow builds Chrome, Firefox, and Safari artifacts and publishes a GitHub Release. You can also run it manually via **Actions → Release → Run workflow** (uses the current `package.json` version when not triggered by a tag).
 
 ## Protocol notes
 

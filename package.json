@@ -12,6 +12,7 @@
     "build:chrome": "node scripts/build-chrome.mjs",
     "build:firefox": "node scripts/build-firefox.mjs",
     "build:safari": "node scripts/build-safari.mjs",
+    "set-version": "node scripts/set-version.mjs",
     "stonegy": "tsx cli/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

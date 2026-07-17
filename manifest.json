@@ -4,7 +4,12 @@
   "version": "1.2.1",
   "description": "Helper for Stonegy — reuses the game WebSocket on stonegy-online.com",
   "incognito": "split",
-  "permissions": ["storage", "tabs", "alarms", "scripting"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "scripting"
+  ],
   "host_permissions": [
     "https://stonegy-online.com/*",
     "https://*.stonegy-online.com/*"
@@ -15,8 +20,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://stonegy-online.com/*", "https://*.stonegy-online.com/*"],
-      "js": ["content/content.ts"],
+      "matches": [
+        "https://stonegy-online.com/*",
+        "https://*.stonegy-online.com/*"
+      ],
+      "js": [
+        "content/content.ts"
+      ],
       "run_at": "document_start"
     }
   ],

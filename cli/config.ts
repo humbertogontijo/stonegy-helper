@@ -15,7 +15,7 @@ export interface CliCharacterConfig {
   settings: SettingsPatch;
 }
 
-const CONFIG_DIR = join(homedir(), ".stonegy-helper");
+export const CONFIG_DIR = join(homedir(), ".stonegy-helper");
 
 function configPath(characterId: string): string {
   return join(CONFIG_DIR, `${characterId}.json`);

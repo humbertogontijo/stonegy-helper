@@ -2,6 +2,8 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { findCharacter, listCharacters } from "../lib/api/characters";
 import { StonegyApiError, type Character } from "../lib/api/types";
+import { clearStoredAuthToken, loadStoredAuthToken } from "./auth-store";
+import { interactiveBrowserLogin } from "./login-flow";
 
 const CHARACTER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,13 +20,32 @@ export function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-export function requireTokenFlag(args: string[]): string {
-  const token =
-    readFlag(args, "--token") ?? readFlag(args, "-t") ?? process.env.STONEGY_TOKEN;
-  if (!token) {
-    throw new Error("Missing token. Pass --token or set STONEGY_TOKEN.");
+export function readExplicitToken(args: string[]): string | undefined {
+  return readFlag(args, "--token") ?? readFlag(args, "-t") ?? process.env.STONEGY_TOKEN;
+}
+
+/**
+ * Resolve a bearer token from --token / STONEGY_TOKEN, ~/.stonegy-helper/auth.json,
+ * or an interactive browser login (Cloudflare Turnstile).
+ */
+export async function resolveToken(args: string[]): Promise<string> {
+  const forceLogin = hasFlag(args, "--login");
+  if (forceLogin) {
+    await clearStoredAuthToken();
+    return interactiveBrowserLogin();
   }
-  return token;
+
+  const explicit = readExplicitToken(args);
+  if (explicit) {
+    return explicit;
+  }
+
+  const stored = await loadStoredAuthToken();
+  if (stored) {
+    return stored;
+  }
+
+  return interactiveBrowserLogin();
 }
 
 async function loadCharacters(token: string) {

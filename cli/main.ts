@@ -15,12 +15,16 @@ program
   .command("run", { isDefault: false })
   .description("Connect to a character and manage features interactively")
   .option("-t, --token <token>", "Bearer token (or set STONEGY_TOKEN)")
+  .option("--login", "Force browser login and refresh the stored token")
   .option("-c, --character <name|uuid>", "Character name or UUID (skips prompt)")
   .option("-v, --verbose", "Verbose WebSocket logging")
   .action(async (options) => {
     const args = ["run"];
     if (options.token) {
       args.push("--token", options.token);
+    }
+    if (options.login) {
+      args.push("--login");
     }
     if (options.character) {
       args.push("--character", options.character);
@@ -40,12 +44,15 @@ program.addHelpText(
   "after",
   `
 Examples:
+  stonegy-helper run
+  stonegy-helper run --login
   stonegy-helper run --token YOUR_TOKEN
   stonegy-helper run --token YOUR_TOKEN --character "My Char"
   STONEGY_TOKEN=... stonegy-helper run
 
-Before starting, the CLI loads characters from /api/character and prompts you to pick one.
-Pass --character with a UUID or name to skip the prompt.
+With no token, the CLI opens a browser login form (Cloudflare Turnstile) and
+stores the JWT in ~/.stonegy-helper/auth.json. Pass --character with a UUID or
+name to skip the character prompt.
 `
 );
 

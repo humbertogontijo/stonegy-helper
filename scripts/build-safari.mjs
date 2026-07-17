@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { patchSafariDist } from "./patch-safari-dist.mjs";
@@ -13,6 +13,7 @@ import {
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST_DIR = join(ROOT, "dist");
 const SAFARI_DIR = join(ROOT, "safari");
+const RELEASE_DIR = join(ROOT, "release");
 
 const APP_NAME = "Stonegy Helper";
 const BUNDLE_ID = "com.stonegy.helper";
@@ -22,6 +23,7 @@ function parseArgs(argv) {
     xcodebuild: false,
     copyResources: true,
     open: false,
+    package: true,
   };
 
   for (const arg of argv) {
@@ -35,12 +37,20 @@ function parseArgs(argv) {
       case "--open":
         flags.open = true;
         break;
+      case "--no-package":
+        flags.package = false;
+        break;
       default:
         console.warn(`Unknown flag ignored: ${arg}`);
     }
   }
 
   return flags;
+}
+
+function readVersion() {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  return pkg.version ?? "0.0.0";
 }
 
 function run(command, args, options = {}) {
@@ -89,6 +99,8 @@ function convertExtension(flags) {
   const signingSettings = readSafariSigningSettings(SAFARI_DIR, ROOT);
   if (signingSettings?.developmentTeam) {
     console.log(`Retaining Xcode signing team: ${signingSettings.developmentTeam}`);
+  } else {
+    console.log("No local Apple team configured; Xcode project will be unsigned for self-signing.");
   }
 
   const converterArgs = [
@@ -136,6 +148,40 @@ function findXcodeProject() {
   return projectPath ?? null;
 }
 
+function findSafariAppDir() {
+  if (!existsSync(SAFARI_DIR)) {
+    return null;
+  }
+
+  const preferred = join(SAFARI_DIR, APP_NAME);
+  if (existsSync(preferred)) {
+    return preferred;
+  }
+
+  const entries = readdirSync(SAFARI_DIR, { withFileTypes: true });
+  const dir = entries.find((entry) => entry.isDirectory() && !entry.name.startsWith("."));
+  return dir ? join(SAFARI_DIR, dir.name) : null;
+}
+
+function packageReleaseZip() {
+  const appDir = findSafariAppDir();
+  if (!appDir) {
+    throw new Error(`No Safari app directory found under ${SAFARI_DIR}`);
+  }
+
+  const version = readVersion();
+  const zipName = `stonegy-helper-safari-v${version}.zip`;
+  const zipPath = join(RELEASE_DIR, zipName);
+
+  mkdirSync(RELEASE_DIR, { recursive: true });
+  rmSync(zipPath, { force: true });
+
+  console.log(`Packaging ${zipName}...`);
+  run("zip", ["-r", zipPath, "."], { cwd: appDir });
+  console.log(`Done: ${zipPath}`);
+  return zipPath;
+}
+
 function xcodeBuild() {
   const projectPath = findXcodeProject();
   if (!projectPath) {
@@ -169,8 +215,14 @@ try {
     xcodeBuild();
   }
 
+  if (flags.package) {
+    packageReleaseZip();
+  }
+
   console.log(`Safari project ready (macOS + iOS): ${SAFARI_DIR}`);
-  console.log("Open the generated .xcodeproj in Xcode to run or archive for distribution.");
+  console.log(
+    "Open the generated .xcodeproj in Xcode, select your Team, then Run or Archive."
+  );
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);

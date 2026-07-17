@@ -1,6 +1,23 @@
 # Stonegy Helper
 
-Chrome extension that controls [Stonegy](https://stonegy-online.com/) by **reusing the game's own WebSocket** to `wss://api-stonegy.com/`. The game page handles login and authentication; the extension only intercepts that connection and lets you send/read protocol messages.
+[![CI](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Browser extension and CLI that control [Stonegy](https://stonegy-online.com/) by **reusing the game's own WebSocket** to `wss://api-stonegy.com/`. The game page handles login and authentication; the extension only intercepts that connection and lets you send/read protocol messages.
+
+Supports **Chrome**, **Firefox**, and **Safari** (macOS / iOS).
+
+If this project helps you, you can [buy me a coffee](https://buymeacoffee.com/humbertogontijo).
+
+## Install from releases
+
+Download the latest artifacts from [GitHub Releases](https://github.com/humbertogontijo/stonegy-helper/releases):
+
+| Asset | Use |
+|-------|-----|
+| `stonegy-helper-chrome-v*.zip` | Chrome / Edge (load unpacked or store upload) |
+| `stonegy-helper-firefox-v*.zip` | Firefox (temporary add-on or AMO upload) |
+| `stonegy-helper-safari-v*.zip` | Safari Xcode project (self-sign in Xcode) |
 
 ## How it works
 
@@ -9,50 +26,112 @@ Chrome extension that controls [Stonegy](https://stonegy-online.com/) by **reusi
 3. Incoming/outgoing frames are mirrored to the background worker.
 4. Bot actions send JSON through the same socket the game uses — no separate auth token needed.
 
-## Install (developer mode)
-
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
-4. Select this repository folder
-
-Or build a zip for distribution:
-
-```bash
-npm run build:chrome
-# release/stonegy-helper-v0.1.0.zip
-```
-
-## Safari (macOS / iOS)
-
-Requires Xcode and the Safari Web Extension converter (`xcrun safari-web-extension-converter`).
-
-```bash
-npm run build:safari
-
-# Optional: compile the macOS target with xcodebuild after conversion
-node scripts/build-safari.mjs --xcodebuild
-```
-
-This builds the extension into `dist/`, patches unsupported manifest keys for Safari (`world`, `type`, `use_dynamic_url`), bundles a classic background script, converts it into `safari/`, and opens an Xcode project you can run on macOS or archive for iOS.
-
-Cross-browser page access lives in `lib/page-bridge/`. The WebSocket hook is an IIFE bundle injected via a synchronous `<script>` tag at `document_start`.
-
-## CLI
-
-The CLI runs the bot headlessly over a direct WebSocket session (no browser tab required). Start an interactive session to connect to a character and toggle features from the terminal.
+## Development setup
 
 ```bash
 npm install
-npm run stonegy -- run --token YOUR_TOKEN
-npm run stonegy -- run --token YOUR_TOKEN --character "My Char"
 ```
+
+Node.js 22+ recommended.
+
+## Chrome / Edge
+
+```bash
+npm run build:chrome
+# → dist/ (load unpacked)
+# → release/stonegy-helper-chrome-v{version}.zip
+```
+
+1. Open `chrome://extensions` (or `edge://extensions`)
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select the `dist/` folder
+
+For a release zip, unpack it and load that folder the same way.
+
+Dev with HMR:
+
+```bash
+npm run dev
+```
+
+## Firefox
+
+```bash
+npm run build:firefox
+# → dist-firefox/
+# → release/stonegy-helper-firefox-v{version}.zip
+```
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on…**
+3. Select `dist-firefox/manifest.json` (or the unzipped release folder’s `manifest.json`)
+
+## Safari (macOS / iOS)
+
+Safari builds produce an **Xcode project**, not a signed `.app`. CI and local builds never require Apple credentials. You sign with your own Apple ID in Xcode.
+
+### From a release zip
+
+1. Download `stonegy-helper-safari-v*.zip` and unzip it.
+2. Open `Stonegy Helper.xcodeproj` in Xcode.
+3. Select the **Stonegy Helper** target → **Signing & Capabilities**.
+4. Choose your **Team** (a free Personal Team / Apple ID is enough to Run locally).
+5. Select a macOS or iOS destination and click **Run**.
+6. In Safari: enable the extension under **Settings → Extensions** (macOS) or **Settings → Apps → Safari → Extensions** (iOS).
+
+App Store / wide iOS distribution needs a paid Apple Developer Program membership. That is out of scope for this repo’s CI.
+
+### Build from source
+
+Requires Xcode and `xcrun safari-web-extension-converter`.
+
+```bash
+npm run build:safari
+# → safari/Stonegy Helper/ (Xcode project)
+# → release/stonegy-helper-safari-v{version}.zip
+```
+
+Optional flags:
+
+```bash
+node scripts/build-safari.mjs --xcodebuild   # also compile macOS Release (needs your local signing)
+node scripts/build-safari.mjs --open         # open the project in Xcode after conversion
+node scripts/build-safari.mjs --no-package   # skip the release zip
+```
+
+Optional local team (gitignored): create `safari-signing.local.json` so rebuilds keep your team ID:
+
+```json
+{ "developmentTeam": "YOUR_TEAM_ID" }
+```
+
+The pipeline builds into `dist/`, patches Safari-unsupported manifest keys (`world`, `type`, `use_dynamic_url`), bundles a classic background script, and converts to `safari/`.
+
+## CLI
+
+The CLI runs the bot headlessly over a direct WebSocket session (no browser tab required).
+
+```bash
+npm install
+npm run stonegy -- run
+npm run stonegy -- run --character "My Char"
+npm run stonegy -- run --token YOUR_TOKEN
+```
+
+If you omit `--token` / `STONEGY_TOKEN`, the CLI:
+
+1. Reuses `~/.stonegy-helper/auth.json` when present
+2. Otherwise opens a Chromium window to Stonegy’s login page (Cloudflare Turnstile included), waits for the session cookie after you sign in, and stores the JWT locally
+
+You only need to complete login (and optionally character select) — entering the game world is not required. Use `--login` to force a fresh browser login.
 
 Environment variables:
 
 | Variable | Purpose |
 |----------|---------|
 | `STONEGY_TOKEN` | Bearer JWT (alternative to `--token`) |
+| `STONEGY_CHROME_PATH` | Optional path to Chrome/Chromium/Edge for browser login |
 
 Before starting, the CLI loads characters from `/api/character` and prompts you to pick one. Pass `--character <uuid|name>` to skip the prompt.
 
@@ -62,7 +141,7 @@ Global install (optional):
 
 ```bash
 npm link
-stonegy-helper run --token YOUR_TOKEN
+stonegy-helper run
 ```
 
 ### Interactive commands
@@ -89,6 +168,19 @@ Once connected, use the menu to:
 - **Battle** — healing, spells, equipment presets, and party position
 - **Hunt** — auto hunt loop, lure lock, and party ready checks
 - **Tasks** — run monster task quests end-to-end
+
+## Releasing (maintainers)
+
+1. Bump `version` in `package.json` and `manifest.json` to the same value.
+2. Commit the bump.
+3. Create and push a tag matching that version:
+
+```bash
+git tag v1.2.1
+git push origin v1.2.1
+```
+
+The [Release](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/release.yml) workflow builds Chrome, Firefox, and Safari artifacts and publishes a GitHub Release. You can also run it manually via **Actions → Release → Run workflow**.
 
 ## Protocol notes
 
@@ -175,10 +267,18 @@ The script verifies SHA256/record counts and stamps file headers. Re-run after g
 
 ## Operational risks (CLI / store review)
 
-- **CLI tokens** — prefer `STONEGY_TOKEN` over `--token` (argv is visible in `ps` / shell history). Tokens are not written under `~/.stonegy-helper/`.
+- **CLI tokens** — prefer `STONEGY_TOKEN` or the stored login token over `--token` (argv is visible in `ps` / shell history). Interactive login writes `~/.stonegy-helper/auth.json` with mode `0600`.
 - **CLI Cloudflare bypass** — `got-scraping` impersonates a browser TLS fingerprint to reach `api-stonegy.com`. This is fragile and may violate game ToS; treat the CLI as best-effort.
 - **Keep-alive** — the extension can simulate DOM activity and block idle WebSocket closes (codes 4001/4002) so AFK disconnects do not drop the session. Document this for store review.
 - **Mobile bypass** — on Safari/iOS the content script may spoof standalone display-mode to skip the “install as app” overlay.
+
+## Support
+
+Enjoying Stonegy Helper? [Buy me a coffee](https://buymeacoffee.com/humbertogontijo).
+
+## License
+
+[MIT](LICENSE)
 
 ## Disclaimer
 

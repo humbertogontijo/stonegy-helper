@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-chrome-firefox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Chrome
+        run: npm run build:chrome
+
+      - name: Build Firefox
+        run: npm run build:firefox
+
+      - name: Upload browser zips
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-zips
+          path: |
+            release/stonegy-helper-chrome-v*.zip
+            release/stonegy-helper-firefox-v*.zip
+
+  build-safari:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Safari Xcode project
+        run: npm run build:safari
+
+      - name: Upload Safari zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-zip
+          path: release/stonegy-helper-safari-v*.zip
+
+  release:
+    needs: [build-chrome-firefox, build-safari]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download browser zips
+        uses: actions/download-artifact@v4
+        with:
+          name: browser-zips
+          path: release
+
+      - name: Download Safari zip
+        uses: actions/download-artifact@v4
+        with:
+          name: safari-zip
+          path: release
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: |
+            release/stonegy-helper-chrome-v*.zip
+            release/stonegy-helper-firefox-v*.zip
+            release/stonegy-helper-safari-v*.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

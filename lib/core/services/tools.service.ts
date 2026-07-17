@@ -1,5 +1,5 @@
 import { hasAllBlessings, nextAffordableBlessing } from "../../domain/bless";
-import { isAutoHuntRestartEnabled } from "../../domain/hunt/guards";
+import { canAutoHuntClaimIdle } from "../../domain/hunt/guards";
 import { isStartableHuntId } from "../../hunts";
 import { featureCooldown, LONG_COOLDOWN, BURST_COOLDOWN, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity, readPartyMemberCount } from "../humanize";
@@ -10,7 +10,7 @@ import {
   isInActiveHunt,
   isInActiveTraining,
 } from "../context-sync";
-import { requestBlessSnapshot, waitForBlessSnapshot } from "../readiness";
+import { requestBlessSnapshot } from "../readiness";
 import type { GameEvent } from "../events/types";
 import {
   canRunIdleAutomation,
@@ -307,23 +307,16 @@ export class ToolsService extends Service {
     if (this.playerHasAllBlessings()) {
       return { ok: true, bought: 0 };
     }
+    if (!this.blessState.blessSnapshotSynced) {
+      requestBlessSnapshot(this.ctx.session);
+      return { ok: false, error: "awaiting_bless_sync", bought: 0 };
+    }
 
     this.buyingBlessings = true;
     updatePlayerState(this.ctx.session, "buying_bless", "Buying blessings…");
     try {
       return await this.run("bless", () =>
         this.traceFlow("auto-buy-bless", async (trace) => {
-          if (!this.blessState.blessSnapshotSynced) {
-            try {
-              await waitForBlessSnapshot(this.ctx.session);
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : "Could not sync blessings.";
-              trace.finish("failed", { error: message });
-              return { ok: false as const, error: message, bought: 0 };
-            }
-          }
-
           if (this.playerHasAllBlessings()) {
             trace.finish("skipped", { error: "already blessed" });
             return { ok: true as const, bought: 0 };
@@ -548,34 +541,40 @@ export class ToolsService extends Service {
       return { finished: false };
     }
 
-    const trainingId = this.trainingState.activeTrainingId;
-    const outcome = await this.ctx.session.commands.run(SendMessageTypes.FINISH_TRAINING, {}, {
-      timeoutMs: INTERACTIVE_COMMAND_TIMEOUT_MS,
-      cooldownMs: featureCooldown("tools.autoTraining"),
+    return this.run("training", async () => {
+      if (!isInActiveTraining(this.ctx.session)) {
+        return { finished: false };
+      }
+
+      const trainingId = this.trainingState.activeTrainingId;
+      const outcome = await this.ctx.session.commands.run(SendMessageTypes.FINISH_TRAINING, {}, {
+        timeoutMs: INTERACTIVE_COMMAND_TIMEOUT_MS,
+        cooldownMs: featureCooldown("tools.autoTraining"),
+      });
+
+      if (outcome.success === false) {
+        return { finished: false, error: outcome.errorMessage ?? "Failed to finish training." };
+      }
+
+      if (trainingId) {
+        await this.ctx.session.commands.run(
+          SendMessageTypes.TRAINING_PRESENCE_UNSUBSCRIBE,
+          { trainingId },
+          { cooldownMs: BURST_COOLDOWN }
+        );
+      }
+
+      // Clear locally so idle gates / ready-check can proceed before TRAINING_FINISHED arrives.
+      this.trainingState.applyTrainingPatch({ activeTrainingId: null });
+      if (this.partyState.partyStatus === "training") {
+        this.partyState.setPartyStatus("idle");
+      }
+      this.cancelAutoTrainingCheck();
+      this.setFlowPhase("idle", { startedAt: null, lastError: null });
+      updatePlayerState(this.ctx.session, "idling", "Left training");
+
+      return { finished: true };
     });
-
-    if (outcome.success === false) {
-      return { finished: false, error: outcome.errorMessage ?? "Failed to finish training." };
-    }
-
-    if (trainingId) {
-      await this.ctx.session.commands.run(
-        SendMessageTypes.TRAINING_PRESENCE_UNSUBSCRIBE,
-        { trainingId },
-        { cooldownMs: BURST_COOLDOWN }
-      );
-    }
-
-    // Clear locally so idle gates / ready-check can proceed before TRAINING_FINISHED arrives.
-    this.trainingState.applyTrainingPatch({ activeTrainingId: null });
-    if (this.partyState.partyStatus === "training") {
-      this.partyState.setPartyStatus("idle");
-    }
-    this.cancelAutoTrainingCheck();
-    this.setFlowPhase("idle", { startedAt: null, lastError: null });
-    updatePlayerState(this.ctx.session, "idling", "Left training");
-
-    return { finished: true };
   }
 
   /** Leave training when hunt (or another feature) needs the character idle. */
@@ -892,20 +891,29 @@ export class ToolsService extends Service {
   }
 
   /**
-   * True when auto-hunt will actually claim idle time (startable hunt + leader).
-   * Boss/quest selector ids are not startable — don't starve auto-training for them.
+   * True when auto-hunt will actually claim idle time (startable hunt + leader +
+   * blessings ready or auto-buy can proceed). Missing/unaffordable blessings must
+   * not starve auto-training.
    */
   private willAutoHuntClaimIdle(): boolean {
     const session = this.ctx.session;
     const settings = session.settings;
-    if (!isAutoHuntRestartEnabled(settings) || !isPartyLeader(this.identity())) {
-      return false;
-    }
-
     const selectedHuntId =
       session.services.tryGet<BattleService>("battle")?.selectedHuntId ??
       settings.selectedHuntId;
-    return selectedHuntId != null && isStartableHuntId(selectedHuntId);
+
+    return canAutoHuntClaimIdle({
+      autoHuntEnabled: settings.autoHuntEnabled,
+      autoTaskerEnabled: settings.autoTaskerEnabled,
+      isLeader: isPartyLeader(this.identity()),
+      selectedHuntId,
+      huntStartable: selectedHuntId != null && isStartableHuntId(selectedHuntId),
+      blessSnapshotSynced: this.blessState.blessSnapshotSynced,
+      autoBuyBless: !!settings.autoBuyBless,
+      goldCoins: this.sessionState.goldCoins,
+      blessings: this.blessState.blessings,
+      ownedCount: this.blessState.ownedCount,
+    });
   }
 
   private hasPendingPostHuntWork(): boolean {

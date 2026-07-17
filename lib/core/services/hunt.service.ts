@@ -1,9 +1,11 @@
 import { hasAllBlessings } from "../../domain/bless";
+import { waitForFeatureEventMessage } from "../../domain/feature-enable";
 import { isStartableHuntId } from "../../hunts";
 import {
   canRestartHunt,
   enableAutoHuntBlockReason,
   isAutoHuntRestartEnabled as isAutoHuntRestartEnabledGuard,
+  isPostHuntLootBlocking,
   shouldDeferHuntRestartForLootFinish,
 } from "../../domain/hunt/guards";
 import { isLootSellEnabled } from "../../domain/loot-sell";
@@ -16,10 +18,9 @@ import {
   INTERACTIVE_COMMAND_TIMEOUT_MS,
   isInActiveHunt,
   isInActiveTraining,
-  isPartyReady,
   resolveStartHuntTimeoutMs,
 } from "../context-sync";
-import { waitForBlessSnapshot, waitForPartySnapshot } from "../readiness";
+import { requestBlessSnapshot, requestPartySnapshot } from "../readiness";
 import { isHandlingLoot, updatePlayerState } from "../player-state";
 import type { BotState } from "../../types";
 import type { FlowTraceRecorder } from "../events/flow-trace";
@@ -97,16 +98,11 @@ export class HuntService extends Service {
    */
   private async ensureAllBlessingsForHunt(
     trace?: FlowTraceRecorder
-  ): Promise<{ ok: boolean; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string; deferred?: boolean }> {
     if (!this.blessState.blessSnapshotSynced) {
-      try {
-        await waitForBlessSnapshot(this.ctx.session);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Could not sync blessings.";
-        trace?.guard("bless_synced", false, message);
-        return { ok: false, error: message };
-      }
+      requestBlessSnapshot(this.ctx.session);
+      trace?.guard("bless_synced", false, "awaiting_bless_sync");
+      return { ok: false, deferred: true, error: "awaiting_bless_sync" };
     }
 
     if (this.playerHasAllBlessings()) {
@@ -119,7 +115,12 @@ export class HuntService extends Service {
         | { buyMissingBlessings: () => Promise<{ ok: boolean; error?: string }> }
         | undefined;
       if (tools) {
-        await tools.buyMissingBlessings();
+        const bought = await tools.buyMissingBlessings();
+        // Snapshot still syncing — buy deferred; BLESS_SNAPSHOT will retry hunt start.
+        if (bought?.error === "awaiting_bless_sync") {
+          trace?.guard("bless_synced", false, "awaiting_bless_sync");
+          return { ok: false, deferred: true, error: "awaiting_bless_sync" };
+        }
       }
     }
 
@@ -192,6 +193,19 @@ export class HuntService extends Service {
 
     if (message.type === ReceiveMessageTypes.PARTY_SNAPSHOT) {
       this.reconcileAwaitingReadyFromSnapshot();
+    }
+
+    // Terminal hunt-finish reasons stop automation even when tasker owns the hunt loop
+    // (isAutoHuntRestartEnabled is false while autoTaskerEnabled).
+    if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
+      const reason =
+        typeof message.data?.reason === "string" ? message.data.reason : undefined;
+      if (reason === "insufficient_gold" || reason === "stamina_depleted") {
+        this.ctx.session.deferFromWire(() =>
+          this.run("hunt", () => this.handleTerminalHuntFinishReason(reason))
+        );
+        return;
+      }
     }
 
     // Auto-hunt restart: only when restart mode is active (autoHuntEnabled && !autoTaskerEnabled).
@@ -305,11 +319,11 @@ export class HuntService extends Service {
   }
 
   private isLootBlockingRestart(): boolean {
-    if (isHandlingLoot(this.ctx.session)) {
-      return true;
-    }
     const loot = this.ctx.session.services.tryGet<LootService>("loot");
-    return loot?.isBusyWithPostHuntLoot() === true;
+    return isPostHuntLootBlocking({
+      playerHandlingLoot: isHandlingLoot(this.ctx.session),
+      lootFlowBusy: loot?.isBusyWithPostHuntLoot() === true,
+    });
   }
 
   /** Leave training when auto-hunt has a startable hunt ready to claim idle. */
@@ -401,6 +415,38 @@ export class HuntService extends Service {
     await this.tryAutoRestartAfterLoot();
   }
 
+  /**
+   * Stop hunt (and tasker when it owns the loop) on terminal finish reasons.
+   * Runs even when auto-hunt restart is disabled because tasker controls hunts.
+   */
+  private async handleTerminalHuntFinishReason(
+    reason: "insufficient_gold" | "stamina_depleted"
+  ): Promise<void> {
+    await this.traceFlow("terminal-finish", async (trace) => {
+      const session = this.ctx.session;
+      const taskerOn = session.settings.autoTaskerEnabled;
+      const status =
+        reason === "insufficient_gold"
+          ? "Insufficient gold to continue."
+          : "Stamina depleted.";
+
+      session.updateSettings({
+        autoHuntEnabled: false,
+        ...(taskerOn
+          ? {
+              autoTaskerEnabled: false,
+              taskerPhase: "error",
+              taskerStatus: status,
+              taskerTargetHuntId: null,
+            }
+          : {}),
+      });
+      this.setFlowPhase("failed", { lastError: reason });
+      this.setFlowPhase("idle");
+      trace.finish("failed", { error: reason });
+    });
+  }
+
   private async handleAutoHuntEventInternal(event: GameEvent): Promise<void> {
     if (event.kind !== "json") {
       return;
@@ -408,7 +454,6 @@ export class HuntService extends Service {
 
     await this.traceFlow("auto-restart", async (trace) => {
       const message = event.message;
-      const session = this.ctx.session;
       const settings = this.ctx.settings.get();
 
       if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
@@ -435,29 +480,9 @@ export class HuntService extends Service {
 
         const reason = message.data?.reason;
 
-        if (reason === "insufficient_gold") {
-          session.updateSettings({
-            autoHuntEnabled: false,
-            ...(session.settings.autoTaskerEnabled
-              ? {
-                  autoTaskerEnabled: false,
-                  taskerPhase: "error",
-                  taskerStatus: "Insufficient gold to continue.",
-                  taskerTargetHuntId: null,
-                }
-              : {}),
-          });
-          this.setFlowPhase("failed", { lastError: "insufficient_gold" });
-          this.setFlowPhase("idle");
-          trace.finish("failed", { error: "insufficient_gold" });
-          return;
-        }
-
-        if (reason === "stamina_depleted") {
-          session.updateSettings({ autoHuntEnabled: false });
-          this.setFlowPhase("failed", { lastError: "stamina_depleted" });
-          this.setFlowPhase("idle");
-          trace.finish("failed", { error: "stamina_depleted" });
+        if (reason === "insufficient_gold" || reason === "stamina_depleted") {
+          // Handled in onEvent via handleTerminalHuntFinishReason (also covers tasker).
+          await this.handleTerminalHuntFinishReason(reason);
           return;
         }
 
@@ -616,6 +641,10 @@ export class HuntService extends Service {
     if (!blessGate.ok) {
       this.setFlowPhase("failed", { lastError: blessGate.error ?? "missing blessings" });
       this.setFlowPhase("idle");
+      if (blessGate.deferred) {
+        trace?.finish("ok", { error: blessGate.error, result: { deferred: true } });
+        return { ok: false, deferred: true, error: blessGate.error };
+      }
       trace?.finish("failed", { error: blessGate.error });
       return { ok: false, error: blessGate.error };
     }
@@ -784,17 +813,39 @@ export class HuntService extends Service {
         return { ok: false as const, error: "Stop auto tasker first — it controls hunts." };
       }
 
-      if (!isPartyReady(session)) {
-        try {
-          await waitForPartySnapshot(session);
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Could not sync party status — try Refresh hunt.";
-          trace.finish("failed", { error: message });
-          return { ok: false as const, error: message };
-        }
+      if (!this.sessionState.characterId) {
+        const error = waitForFeatureEventMessage(
+          "session:bootstrap",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
+      }
+
+      if (!this.partyState.partySnapshotSynced) {
+        requestPartySnapshot(session);
+        const error = waitForFeatureEventMessage(
+          "party:snapshot",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
+      }
+
+      if (!isPartyLeader(this.identity())) {
+        const error = "Only the party leader can start a hunt.";
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
+      }
+
+      if (!this.blessState.blessSnapshotSynced) {
+        requestBlessSnapshot(session);
+        const error = waitForFeatureEventMessage(
+          "bless:snapshot",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
       }
 
       const blessReady = await this.ensureAllBlessingsForHunt(trace);
@@ -812,6 +863,7 @@ export class HuntService extends Service {
         hasValidHunt: isStartableHuntId(huntId),
         hasCharacterId: !!this.sessionState.characterId,
         partySnapshotSynced: this.partyState.partySnapshotSynced,
+        blessSnapshotSynced: this.blessState.blessSnapshotSynced,
         isLeader: isPartyLeader(this.identity()),
         hasAllBlessings: this.playerHasAllBlessings(),
       });
@@ -819,18 +871,34 @@ export class HuntService extends Service {
       trace.guard("enable_block", block == null, block ?? undefined);
 
       if (block === "no_character") {
-        trace.finish("failed", { error: "Character not synced — reload the game tab." });
-        return { ok: false as const, error: "Character not synced — reload the game tab." };
+        const error = waitForFeatureEventMessage(
+          "session:bootstrap",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
       }
       if (block === "party_not_synced") {
-        trace.finish("failed", {
-          error: "Could not sync party status — try Refresh hunt.",
-        });
-        return { ok: false as const, error: "Could not sync party status — try Refresh hunt." };
+        requestPartySnapshot(session);
+        const error = waitForFeatureEventMessage(
+          "party:snapshot",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
       }
       if (block === "not_leader") {
         trace.finish("failed", { error: "Only the party leader can start a hunt." });
         return { ok: false as const, error: "Only the party leader can start a hunt." };
+      }
+      if (block === "bless_not_synced") {
+        requestBlessSnapshot(session);
+        const error = waitForFeatureEventMessage(
+          "bless:snapshot",
+          "enabling auto hunt"
+        );
+        trace.finish("failed", { error });
+        return { ok: false as const, error };
       }
       if (block === "missing_blessings") {
         const owned = this.blessState.ownedCount ?? 0;

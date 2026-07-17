@@ -90,6 +90,19 @@ describe("auto training", () => {
     session.updateView({
       character: { ...session.view.character, characterId: "me" },
       party: { ...session.view.party, partyLeaderId: "me", partySnapshotSynced: true },
+      bless: {
+        ...session.view.bless,
+        blessSnapshotSynced: true,
+        ownedCount: 7,
+        blessings: Array.from({ length: 7 }, (_, id) => ({
+          id,
+          name: "b",
+          tier: "regular",
+          iconPath: "",
+          cost: 100,
+          owned: true,
+        })),
+      },
     });
 
     expect(tools(session).canAutoTrain()).toBe(false);
@@ -99,6 +112,60 @@ describe("auto training", () => {
     await Promise.resolve();
 
     expect(session.commands.run).not.toHaveBeenCalled();
+  });
+
+  it("starts training when auto hunt is armed but blessings are missing", async () => {
+    const session = createSession({
+      autoHuntEnabled: true,
+      selectedHuntId: 12,
+      autoBuyBless: false,
+      autoTrainingIdleDelaySec: 1,
+    });
+    session.updateView({
+      character: { ...session.view.character, characterId: "me" },
+      party: { ...session.view.party, partyLeaderId: "me", partySnapshotSynced: true },
+      bless: {
+        ...session.view.bless,
+        blessSnapshotSynced: true,
+        ownedCount: 3,
+        blessings: [
+          ...Array.from({ length: 3 }, (_, id) => ({
+            id,
+            name: "b",
+            tier: "regular",
+            iconPath: "",
+            cost: 100,
+            owned: true,
+          })),
+          ...Array.from({ length: 4 }, (_, i) => ({
+            id: i + 3,
+            name: "b",
+            tier: "regular",
+            iconPath: "",
+            cost: 100,
+            owned: false,
+          })),
+        ],
+      },
+    });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    expect(tools(session).canAutoTrain()).toBe(true);
+
+    tools(session).scheduleAutoTrainingCheck();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
   });
 
   it("starts training when auto hunt is on but selected hunt is not startable", async () => {
@@ -183,11 +250,12 @@ describe("auto training", () => {
 
     const partySnapshot = {
       kind: "json" as const,
+      direction: "receive" as const,
       message: {
         type: ReceiveMessageTypes.PARTY_SNAPSHOT,
         data: { party: { status: "idle", members: [] } },
       },
-      receivedAt: Date.now(),
+      raw: "",
     };
 
     await tools(session).onEvent(partySnapshot);

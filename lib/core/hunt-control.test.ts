@@ -4,18 +4,23 @@ import { GameSession } from "./session";
 import { defaultSettings } from "./settings";
 import { defaultSessionView } from "./projections/defaults";
 import { patchSessionView } from "./projections/patch";
-import { SendMessageTypes } from "../protocol";
+import { SendMessageTypes, ReceiveMessageTypes } from "../protocol";
 import type { Transport } from "./transport";
 import { HuntService } from "./services/hunt.service";
 import { TasksService } from "./services/tasks.service";
 import { BattleService } from "./services/battle.service";
 
 vi.mock("./readiness", () => ({
-  waitForPartySnapshot: vi.fn().mockResolvedValue(undefined),
-  waitForBlessSnapshot: vi.fn().mockResolvedValue(undefined),
+  QUEST_PUSH_WAIT_MS: 4_000,
+  requestBlessSnapshot: vi.fn(),
+  requestPartySnapshot: vi.fn(),
+  requestQuestSnapshot: vi.fn(),
 }));
 
-import { waitForPartySnapshot, waitForBlessSnapshot } from "./readiness";
+import {
+  requestBlessSnapshot,
+  requestPartySnapshot,
+} from "./readiness";
 
 class MockTransport implements Transport {
   async connect(): Promise<void> {}
@@ -54,7 +59,6 @@ function connectedSession(): GameSession {
 describe("hunt-control", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.mocked(waitForPartySnapshot).mockResolvedValue(undefined);
   });
 
   it("starts hunt before enabling auto hunt for party leaders", async () => {
@@ -64,7 +68,8 @@ describe("hunt-control", () => {
     const result = await session.services.get<HuntService>("hunt").enableAutoHunt(1);
 
     expect(result.ok).toBe(true);
-    expect(waitForPartySnapshot).not.toHaveBeenCalled();
+    expect(requestPartySnapshot).not.toHaveBeenCalled();
+    expect(requestBlessSnapshot).not.toHaveBeenCalled();
     expect(runSpy).toHaveBeenCalledWith(
       SendMessageTypes.START_HUNT,
       expect.objectContaining({ huntId: 1 }),
@@ -190,7 +195,7 @@ describe("hunt-control", () => {
     vi.useRealTimers();
   });
 
-  it("auto-restarts after reload even when blessings are not synced yet", async () => {
+  it("defers auto-restart until BLESS_SNAPSHOT when blessings are not synced", async () => {
     vi.useFakeTimers();
     const session = connectedSession();
     session.updateView({
@@ -204,18 +209,7 @@ describe("hunt-control", () => {
     });
 
     const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
-    vi.mocked(waitForBlessSnapshot).mockImplementation(async () => {
-      session.updateView({
-        bless: {
-          ...session.view.bless,
-          blessSnapshotSynced: true,
-          ownedCount: 7,
-          lastSnapshotAt: Date.now(),
-        },
-      });
-    });
 
-    // Avoid updateSettings side-effects until mocks are ready.
     session.settings = {
       ...session.settings,
       autoHuntEnabled: true,
@@ -227,12 +221,78 @@ describe("hunt-control", () => {
     await vi.runAllTimersAsync();
     await startPromise;
 
-    expect(waitForBlessSnapshot).toHaveBeenCalled();
+    expect(requestBlessSnapshot).toHaveBeenCalled();
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+
+    session.updateView({
+      bless: {
+        ...session.view.bless,
+        blessSnapshotSynced: true,
+        ownedCount: 7,
+        lastSnapshotAt: Date.now(),
+      },
+    });
+
+    await session.services.get<HuntService>("hunt").onEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.BLESS_SNAPSHOT,
+        data: {
+          ownedCount: 7,
+          skillLossReductionPercent: 56,
+          itemLossPercent: 0,
+          hasAolEquipped: false,
+          blessings: [],
+        },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(runSpy).toHaveBeenCalledWith(
       SendMessageTypes.START_HUNT,
       expect.objectContaining({ huntId: 57 }),
       expect.any(Object)
     );
+
+    vi.useRealTimers();
+  });
+
+  it("stops tasker on stamina_depleted the same way as insufficient gold", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      autoTaskerEnabled: true,
+      taskerPhase: "hunting",
+      selectedHuntId: 1,
+    };
+
+    await session.services.get<HuntService>("hunt").onEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.HUNT_FINISHED,
+        data: { reason: "stamina_depleted" },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(session.settings.autoTaskerEnabled).toBe(false);
+    expect(session.settings.taskerPhase).toBe("error");
+    expect(session.settings.taskerStatus).toContain("Stamina");
 
     vi.useRealTimers();
   });
@@ -275,7 +335,7 @@ describe("hunt-control", () => {
     expect(session.settings.autoTaskerEnabled).toBe(false);
   });
 
-  it("waits for party snapshot when party context is missing", async () => {
+  it("rejects auto hunt and requests party:snapshot when party context is missing", async () => {
     const session = connectedSession();
     session.view = patchSessionView(session.view, {
       party: {
@@ -283,11 +343,87 @@ describe("hunt-control", () => {
         partySnapshotSynced: false,
       },
     });
-    vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+    const runSpy = vi.spyOn(session.commands, "run");
 
-    await session.services.get<HuntService>("hunt").enableAutoHunt(1);
+    const result = await session.services.get<HuntService>("hunt").enableAutoHunt(1);
 
-    expect(waitForPartySnapshot).toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("party:snapshot");
+    expect(requestPartySnapshot).toHaveBeenCalledWith(session);
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+    expect(session.settings.autoHuntEnabled).toBe(false);
+  });
+
+  it("rejects auto hunt and requests bless:snapshot when blessings are not synced", async () => {
+    const session = connectedSession();
+    session.view = patchSessionView(session.view, {
+      bless: {
+        ...session.view.bless,
+        blessSnapshotSynced: false,
+        ownedCount: null,
+        blessings: [],
+        lastSnapshotAt: null,
+      },
+    });
+    const runSpy = vi.spyOn(session.commands, "run");
+
+    const result = await session.services.get<HuntService>("hunt").enableAutoHunt(1);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("bless:snapshot");
+    expect(requestBlessSnapshot).toHaveBeenCalledWith(session);
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+    expect(session.settings.autoHuntEnabled).toBe(false);
+  });
+
+  it("rejects auto tasker and requests party:snapshot when party context is missing", async () => {
+    const session = connectedSession();
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partySnapshotSynced: false,
+      },
+    });
+    const startSpy = vi.spyOn(
+      session.services.get<TasksService>("tasks"),
+      "startAutoTasker"
+    );
+
+    const result = await session.services
+      .get<TasksService>("tasks")
+      .enableAutoTasker(6);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("party:snapshot");
+    expect(requestPartySnapshot).toHaveBeenCalledWith(session);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(session.settings.autoTaskerEnabled).toBe(false);
+  });
+
+  it("rejects Task now and requests party:snapshot when party context is missing", async () => {
+    const session = connectedSession();
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partySnapshotSynced: false,
+      },
+    });
+
+    const result = await session.services
+      .get<TasksService>("tasks")
+      .runTaskNow(6);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("party:snapshot");
+    expect(requestPartySnapshot).toHaveBeenCalledWith(session);
   });
 
   it("does not enable auto hunt when hunt start fails", async () => {

@@ -1,3 +1,5 @@
+import { hasAllBlessings, nextAffordableBlessing } from "../bless";
+
 /** Settings slice needed for auto-hunt restart eligibility. */
 export type AutoHuntRestartSettings = {
   autoHuntEnabled: boolean;
@@ -29,6 +31,14 @@ export function shouldDeferHuntRestartForLootFinish(
     return true;
   }
   return false;
+}
+
+/** True while post-hunt sell/split owns the idle transition (hunt restart / tasker advance). */
+export function isPostHuntLootBlocking(input: {
+  playerHandlingLoot: boolean;
+  lootFlowBusy: boolean;
+}): boolean {
+  return input.playerHandlingLoot || input.lootFlowBusy;
 }
 
 export type CanRestartHuntInput = {
@@ -68,12 +78,62 @@ export function canRestartHunt(input: CanRestartHuntInput): boolean {
   return true;
 }
 
+/**
+ * True when auto-hunt will actually claim idle (start a hunt), not merely armed.
+ * Used by auto-training so missing blessings / unaffordable auto-buy do not starve training.
+ */
+export type CanAutoHuntClaimIdleInput = {
+  autoHuntEnabled: boolean;
+  autoTaskerEnabled: boolean;
+  isLeader: boolean;
+  selectedHuntId: number | null | undefined;
+  huntStartable: boolean;
+  blessSnapshotSynced: boolean;
+  autoBuyBless: boolean;
+  goldCoins: number | null | undefined;
+  blessings: Array<{ owned: boolean; cost: number }>;
+  ownedCount: number | null | undefined;
+};
+
+export function canAutoHuntClaimIdle(input: CanAutoHuntClaimIdleInput): boolean {
+  if (!isAutoHuntRestartEnabled(input)) {
+    return false;
+  }
+  if (!input.isLeader) {
+    return false;
+  }
+  if (input.selectedHuntId == null || !input.huntStartable) {
+    return false;
+  }
+
+  // Snapshot still loading — hunt will resume on BLESS_SNAPSHOT; do not starve training.
+  if (!input.blessSnapshotSynced) {
+    return false;
+  }
+
+  if (
+    hasAllBlessings({
+      ownedCount: input.ownedCount,
+      blessings: input.blessings,
+    })
+  ) {
+    return true;
+  }
+
+  // Hunt can claim idle only when auto-buy can actually purchase the next blessing.
+  if (!input.autoBuyBless) {
+    return false;
+  }
+  return nextAffordableBlessing(input.blessings, input.goldCoins) != null;
+}
+
 export type CanEnableAutoHuntInput = {
   connected: boolean;
   autoTaskerEnabled: boolean;
   hasValidHunt: boolean;
   hasCharacterId: boolean;
   partySnapshotSynced: boolean;
+  blessSnapshotSynced: boolean;
   isLeader: boolean;
   hasAllBlessings: boolean;
 };
@@ -84,6 +144,7 @@ export type EnableAutoHuntBlockReason =
   | "tasker_controls"
   | "no_character"
   | "party_not_synced"
+  | "bless_not_synced"
   | "not_leader"
   | "missing_blessings";
 
@@ -108,6 +169,9 @@ export function enableAutoHuntBlockReason(
   }
   if (!input.isLeader) {
     return "not_leader";
+  }
+  if (!input.blessSnapshotSynced) {
+    return "bless_not_synced";
   }
   if (!input.hasAllBlessings) {
     return "missing_blessings";

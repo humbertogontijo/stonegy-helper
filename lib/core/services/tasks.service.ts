@@ -1,6 +1,7 @@
 import { featureCooldown, isOnCooldown, LONG_COOLDOWN } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity } from "../humanize";
-import { shouldDeferHuntRestartForLootFinish } from "../../domain/hunt/guards";
+import { waitForFeatureEventMessage } from "../../domain/feature-enable";
+import { shouldDeferHuntRestartForLootFinish, isPostHuntLootBlocking } from "../../domain/hunt/guards";
 import { isLootSellEnabled } from "../../domain/loot-sell";
 import { ReceiveMessageTypes, SendMessageTypes } from "../../protocol";
 import {
@@ -10,8 +11,12 @@ import {
   isMissionTasksComplete,
   resolveTaskHuntId,
 } from "../../domain/tasks";
-import { isInActiveHunt, hasQuestContextData, isPartyReady } from "../context-sync";
-import { QUEST_PUSH_WAIT_MS, requestQuestSnapshot, waitForPartySnapshot } from "../readiness";
+import { isInActiveHunt, hasQuestContextData } from "../context-sync";
+import {
+  QUEST_PUSH_WAIT_MS,
+  requestPartySnapshot,
+  requestQuestSnapshot,
+} from "../readiness";
 import { isHandlingLoot } from "../player-state";
 import type { GameEvent } from "../events/types";
 import type { TaskerPhase } from "../../types";
@@ -151,7 +156,8 @@ export class TasksService extends Service {
     }
 
     if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
-      await this.handleTaskerHuntFinishedInternal();
+      // Off the wire stack: advance/leave may await command responses.
+      this.ctx.session.deferFromWire(() => this.handleTaskerHuntFinishedInternal());
       return;
     }
 
@@ -159,17 +165,17 @@ export class TasksService extends Service {
       message.type === ReceiveMessageTypes.TASKS_SNAPSHOT ||
       message.type === ReceiveMessageTypes.QUEST_ACTION_RESULT
     ) {
-      await this.handleTaskerEventInternal(event);
+      this.ctx.session.deferFromWire(() => this.handleTaskerEventInternal(event));
     }
   }
 
   /** True while post-hunt sell/split owns the idle transition (mirrors hunt restart). */
   private isLootBlockingAdvance(): boolean {
-    if (isHandlingLoot(this.ctx.session)) {
-      return true;
-    }
     const loot = this.ctx.session.services.tryGet<LootService>("loot");
-    return loot?.isBusyWithPostHuntLoot() === true;
+    return isPostHuntLootBlocking({
+      playerHandlingLoot: isHandlingLoot(this.ctx.session),
+      lootFlowBusy: loot?.isBusyWithPostHuntLoot() === true,
+    });
   }
 
   /**
@@ -634,26 +640,25 @@ export class TasksService extends Service {
       };
     }
 
-    if (!isPartyReady(session)) {
-      try {
-        await waitForPartySnapshot(session);
-      } catch (error) {
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : "Could not sync party status.",
-        };
-      }
-    }
-
     if (!this.sessionState.characterId) {
       return {
         ok: false,
-        error: "Character not synced — reload the game tab.",
+        error: waitForFeatureEventMessage(
+          "session:bootstrap",
+          "enabling auto tasker"
+        ),
       };
     }
 
     if (!this.partyState.partySnapshotSynced) {
-      return { ok: false, error: "Could not sync party status — try Refresh hunt." };
+      requestPartySnapshot(session);
+      return {
+        ok: false,
+        error: waitForFeatureEventMessage(
+          "party:snapshot",
+          "enabling auto tasker"
+        ),
+      };
     }
 
     if (!isPartyLeader(this.identity())) {
@@ -720,19 +725,25 @@ export class TasksService extends Service {
       return { ok: false, error: "Tasker is busy — wait for the current step to finish." };
     }
 
-    if (!isPartyReady(session)) {
-      try {
-        await waitForPartySnapshot(session);
-      } catch (error) {
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : "Could not sync party status.",
-        };
-      }
+    if (!this.sessionState.characterId) {
+      return {
+        ok: false,
+        error: waitForFeatureEventMessage(
+          "session:bootstrap",
+          "running Task now"
+        ),
+      };
     }
 
-    if (!this.sessionState.characterId) {
-      return { ok: false, error: "Character not synced — reload the game tab." };
+    if (!this.partyState.partySnapshotSynced) {
+      requestPartySnapshot(session);
+      return {
+        ok: false,
+        error: waitForFeatureEventMessage(
+          "party:snapshot",
+          "running Task now"
+        ),
+      };
     }
 
     if (!isPartyLeader(this.identity())) {
@@ -743,7 +754,13 @@ export class TasksService extends Service {
 
     if (!hasQuestContextData(session)) {
       requestQuestSnapshot(session);
-      return { ok: false, error: "Syncing tasks — try Task now again in a moment." };
+      return {
+        ok: false,
+        error: waitForFeatureEventMessage(
+          "tasks:snapshot",
+          "running Task now"
+        ),
+      };
     }
 
     const activeTasks = getActiveTasksForQuest(this.tasksState.tasks, questId);

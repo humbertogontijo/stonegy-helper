@@ -124,7 +124,18 @@ describe("awaitSessionReady", () => {
 
     await readyPromise;
 
-    expect(runSpy).not.toHaveBeenCalled();
+    // Party arrived via push — no party_get_snapshot command needed.
+    expect(runSpy).not.toHaveBeenCalledWith(
+      "party_get_snapshot",
+      expect.anything(),
+      expect.anything()
+    );
+    // Bless is requested fire-and-forget when no bless snapshot has arrived yet.
+    expect(runSpy).toHaveBeenCalledWith(
+      "bless_get_snapshot",
+      {},
+      expect.objectContaining({ force: true, waitForResponse: false })
+    );
     expect(session.view.party.partySnapshotSynced).toBe(true);
   });
 });

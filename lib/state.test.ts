@@ -136,6 +136,7 @@ describe("party snapshot state", () => {
       lootSplitCompletedByPlayerId: {},
       lootSplitProgressFingerprint: null,
       lootSplitHistory: [],
+      readyCheckId: null,
     });
   });
 });

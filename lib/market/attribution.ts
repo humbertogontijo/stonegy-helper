@@ -98,12 +98,44 @@ export function shouldAttributeMarketSnapshotToItem(
   }
 
   // Empty sell book: trust header / filters only — never attribute ambiguous empties.
+  // Callers with a known in-flight filtered fetch should use
+  // `matchesMarketSnapshotToRequest` / `attributeInFlightEmptyMarketSnapshot`.
   const requestedItemId = typeof data.requestedItemId === "number" ? data.requestedItemId : null;
   if (requestedItemId != null && requestedItemId > 0) {
     return requestedItemId === itemId;
   }
 
   return false;
+}
+
+/** True when the sell side has no orders (item fetch with no listings). */
+export function hasEmptyMarketSellBook(
+  data: MarketSnapshotData | Record<string, unknown> | undefined
+): boolean {
+  if (!data) {
+    return false;
+  }
+  return orderItemIdsFrom(data, "sellOrders").size === 0;
+}
+
+/**
+ * Attribute an empty sell-book snapshot to an in-flight filtered item fetch.
+ * Live traffic often omits filters and keeps a stale requestedItemId when the book is empty.
+ */
+export function attributeInFlightEmptyMarketSnapshot(
+  data: MarketSnapshotData | Record<string, unknown> | undefined,
+  inFlightItemId: number
+): number | null {
+  if (!Number.isFinite(inFlightItemId) || inFlightItemId <= 0) {
+    return null;
+  }
+  if (shouldAttributeMarketSnapshotToItem(data, inFlightItemId)) {
+    return inFlightItemId;
+  }
+  if (hasEmptyMarketSellBook(data)) {
+    return inFlightItemId;
+  }
+  return null;
 }
 
 /** Correlate a market:snapshot response to the outbound market_get_snapshot request. */
@@ -128,7 +160,9 @@ export function matchesMarketSnapshotToRequest(
       : {};
   const itemId = typeof filters.itemId === "number" ? filters.itemId : null;
   if (itemId != null && itemId > 0) {
-    return shouldAttributeMarketSnapshotToItem(responseData, itemId);
+    // Filtered fetch: empty sell book means "no listings" even when the game
+    // leaves a stale requestedItemId and omits filters on the reply.
+    return attributeInFlightEmptyMarketSnapshot(responseData, itemId) === itemId;
   }
 
   const referenceOrderId = requestData.referenceOrderId;

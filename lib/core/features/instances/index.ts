@@ -21,7 +21,9 @@ export {
 export { huntAutoHuntSubFeature } from "./hunt";
 export { tasksAutoTaskerSubFeature } from "./tasks";
 export {
-  toolsReadyCheckSubFeature,
+  toolsConfirmPartyHuntSubFeature,
+  toolsAutoBuyBlessSubFeature,
+  toolsAutoDisbandSoloPartySubFeature,
   toolsAcceptPartyInviteSubFeature,
   toolsAutoTrainingSubFeature,
 } from "./tools";

@@ -164,14 +164,28 @@ export const RequestResponseMap: Readonly<Record<string, RequestResponseEntry>> 
     "start_monster_task"
   ),
   // Failures arrive as party:action_result; success bootstraps the hunt.
+  // Multi-member parties open a ready-check (party:snapshot) before hunt_bootstrap.
   [SendMessageTypes.START_HUNT]: {
     response: [
       ReceiveMessageTypes.PARTY_ACTION_RESULT,
       ReceiveMessageTypes.HUNT_BOOTSTRAP,
+      ReceiveMessageTypes.PARTY_SNAPSHOT,
     ],
-    match: ({ response }) =>
-      response.type === ReceiveMessageTypes.HUNT_BOOTSTRAP ||
-      readAction(response) === "start_hunt",
+    match: ({ response }) => {
+      if (response.type === ReceiveMessageTypes.HUNT_BOOTSTRAP) {
+        return true;
+      }
+      if (readAction(response) === "start_hunt") {
+        return true;
+      }
+      if (response.type !== ReceiveMessageTypes.PARTY_SNAPSHOT) {
+        return false;
+      }
+      const readyCheck = (
+        response.data as { party?: { readyCheck?: { id?: string } | null } } | undefined
+      )?.party?.readyCheck;
+      return typeof readyCheck?.id === "string";
+    },
   },
   [SendMessageTypes.LEAVE_HUNT]: respond(ReceiveMessageTypes.HUNT_FINISHED),
   [SendMessageTypes.PARTY_READY_CHECK_CONFIRM]: {

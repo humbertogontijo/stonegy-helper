@@ -19,5 +19,14 @@
       "@/*": ["./popup/src/*"]
     }
   },
-  "include": ["popup/src", "lib", "background", "content", "cli", "vite.config.ts"]
+  "include": [
+    "popup/src",
+    "lib",
+    "background",
+    "content",
+    "adapters",
+    "cli",
+    "chrome-env.d.ts",
+    "vite.config.ts"
+  ]
 }

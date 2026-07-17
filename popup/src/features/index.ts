@@ -168,14 +168,17 @@ export function getFeatureStatus(featureId: FeatureId, state: BotState | null): 
       if (state.settings.autoReconnectEnabled) {
         parts.push("Auto reconnect on");
       }
-      if (state.settings.autoConfirmReadyCheck) {
-        parts.push("Auto confirm ready");
+      if (state.settings.autoConfirmPartyHunt) {
+        parts.push("Auto confirm party hunt");
       }
       if (state.settings.autoBuyBless) {
         const owned = state.bless?.ownedCount;
         parts.push(
           owned != null ? `Auto buy bless (${owned}/7)` : "Auto buy bless"
         );
+      }
+      if (state.settings.autoDisbandSoloParty) {
+        parts.push("Auto disband solo party");
       }
       if (state.settings.autoAcceptPartyInvite) {
         parts.push(

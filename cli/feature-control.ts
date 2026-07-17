@@ -132,10 +132,12 @@ function settingsPatchForSubFeature(
       return { autoLockLure: enabled };
     case "loot.lootSplit":
       return { autoSplitLootOnHuntFinished: enabled };
-    case "tools.readyCheck":
-      return { autoConfirmReadyCheck: enabled };
+    case "tools.confirmPartyHunt":
+      return { autoConfirmPartyHunt: enabled };
     case "tools.autoBuyBless":
       return { autoBuyBless: enabled };
+    case "tools.autoDisbandSoloParty":
+      return { autoDisbandSoloParty: enabled };
     case "tools.acceptPartyInvite":
       return { autoAcceptPartyInvite: enabled };
     case "tools.autoTraining":
@@ -192,8 +194,9 @@ export async function setSubFeatureEnabled(
 export function collectPersistedSettings(ctx: FeatureControlContext): Partial<Settings> {
   const state = ctx.getState();
   return {
-    autoConfirmReadyCheck: state.settings.autoConfirmReadyCheck,
+    autoConfirmPartyHunt: state.settings.autoConfirmPartyHunt,
     autoBuyBless: state.settings.autoBuyBless,
+    autoDisbandSoloParty: state.settings.autoDisbandSoloParty,
     autoAcceptPartyInvite: state.settings.autoAcceptPartyInvite,
     partyInviteAcceptMode: state.settings.partyInviteAcceptMode,
     partyInviteAllowlistNames: state.settings.partyInviteAllowlistNames,

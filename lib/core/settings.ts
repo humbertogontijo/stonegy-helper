@@ -18,9 +18,11 @@ export interface HuntBattleSettings {
 export interface Settings {
   characterId: string | null;
   characterName: string | null;
-  autoConfirmReadyCheck: boolean;
+  autoConfirmPartyHunt: boolean;
   /** Buy missing blessings until all 7 are owned. */
   autoBuyBless: boolean;
+  /** Disband when party drops from 2+ members to only you (leader, idle). */
+  autoDisbandSoloParty: boolean;
   autoAcceptPartyInvite: boolean;
   partyInviteAcceptMode: PartyInviteAcceptMode;
   partyInviteAllowlistNames: string[];
@@ -103,8 +105,9 @@ export function defaultSettings(): Settings {
   return {
     characterId: null,
     characterName: null,
-    autoConfirmReadyCheck: false,
+    autoConfirmPartyHunt: false,
     autoBuyBless: false,
+    autoDisbandSoloParty: false,
     autoAcceptPartyInvite: false,
     partyInviteAcceptMode: "anyone",
     partyInviteAllowlistNames: [],

@@ -15,6 +15,7 @@ import { SendMessageTypes, ReceiveMessageTypes } from "../../protocol";
 import {
   INTERACTIVE_COMMAND_TIMEOUT_MS,
   isInActiveHunt,
+  isInActiveTraining,
   isPartyReady,
   resolveStartHuntTimeoutMs,
 } from "../context-sync";
@@ -31,11 +32,12 @@ import type { SessionState } from "./states/session.state";
 import type { BlessState } from "./states/bless.state";
 import type { BattleService } from "./battle.service";
 import type { LootService } from "./loot.service";
+import type { ToolsService } from "./tools.service";
 
 export type HuntFlowPhase =
   | "idle"
-  | "preparing_party"
   | "starting"
+  | "awaiting_ready"
   | "active"
   | "leaving"
   | "restarting"
@@ -62,6 +64,9 @@ export class HuntService extends Service {
     startedAt: null,
     lastError: null,
   };
+
+  /** True after a ready-check id was observed while in awaiting_ready (cleared on exit). */
+  private sawReadyCheckWhileAwaiting = false;
 
   constructor(
     ctx: ServiceContext,
@@ -176,6 +181,19 @@ export class HuntService extends Service {
       return;
     }
 
+    if (message.type === ReceiveMessageTypes.PARTY_ACTION_RESULT) {
+      this.handleReadyCheckActionResult(message.data);
+      return;
+    }
+
+    if (message.type === ReceiveMessageTypes.HUNT_BOOTSTRAP) {
+      this.handleHuntBootstrapWhileAwaitingReady();
+    }
+
+    if (message.type === ReceiveMessageTypes.PARTY_SNAPSHOT) {
+      this.reconcileAwaitingReadyFromSnapshot();
+    }
+
     // Auto-hunt restart: only when restart mode is active (autoHuntEnabled && !autoTaskerEnabled).
     if (
       (message.type === ReceiveMessageTypes.HUNT_FINISHED ||
@@ -186,6 +204,92 @@ export class HuntService extends Service {
         this.run("hunt", () => this.handleAutoHuntEventInternal(event))
       );
     }
+
+    // After reload, party_snapshot often arrives before bless sync — retry once blessings land.
+    if (
+      message.type === ReceiveMessageTypes.BLESS_SNAPSHOT &&
+      this.isAutoHuntRestartEnabled()
+    ) {
+      this.ctx.session.deferFromWire(() =>
+        this.run("hunt", () => this.tryAutoRestartAfterLoot())
+      );
+    }
+  }
+
+  /** Ready-check expired / cancelled — leave awaiting_ready so a later restart can try again. */
+  private handleReadyCheckActionResult(data: {
+    action?: string;
+    success?: boolean;
+    message?: string;
+  } | undefined): void {
+    if (data?.action !== "ready_check_cancel") {
+      return;
+    }
+    if (this.flow.phase !== "awaiting_ready") {
+      return;
+    }
+    this.leaveAwaitingReady("failed", data.message ?? "Ready check cancelled");
+  }
+
+  private handleHuntBootstrapWhileAwaitingReady(): void {
+    if (this.flow.phase !== "awaiting_ready" && this.flow.phase !== "starting") {
+      return;
+    }
+    if (this.isHunting()) {
+      this.sawReadyCheckWhileAwaiting = false;
+      this.setFlowPhase("active");
+    }
+  }
+
+  /**
+   * Leave awaiting_ready once a ready-check we already saw disappears without a hunt.
+   * Do not clear on snapshots that arrive before the ready-check is published.
+   */
+  private reconcileAwaitingReadyFromSnapshot(): void {
+    if (this.flow.phase !== "awaiting_ready") {
+      return;
+    }
+    if (this.isHunting()) {
+      this.sawReadyCheckWhileAwaiting = false;
+      this.setFlowPhase("active");
+      return;
+    }
+    if (this.partyState.readyCheckId != null) {
+      this.sawReadyCheckWhileAwaiting = true;
+      return;
+    }
+    if (this.sawReadyCheckWhileAwaiting) {
+      this.leaveAwaitingReady("idle");
+    }
+  }
+
+  private isAwaitingPartyReady(): boolean {
+    return (
+      this.flow.phase === "awaiting_ready" || this.partyState.readyCheckId != null
+    );
+  }
+
+  private enterAwaitingReady(trace?: FlowTraceRecorder): {
+    ok: true;
+    deferred: true;
+  } {
+    this.sawReadyCheckWhileAwaiting = this.partyState.readyCheckId != null;
+    this.setFlowPhase("awaiting_ready");
+    updatePlayerState(this.ctx.session, "idling", "Waiting for party ready…");
+    trace?.setPhase("awaiting_ready");
+    trace?.finish("ok", { result: { deferred: true, awaitingReady: true } });
+    return { ok: true, deferred: true };
+  }
+
+  private leaveAwaitingReady(
+    next: "idle" | "failed",
+    lastError?: string
+  ): void {
+    this.sawReadyCheckWhileAwaiting = false;
+    if (next === "failed") {
+      this.setFlowPhase("failed", { lastError: lastError ?? "Ready check cancelled" });
+    }
+    this.setFlowPhase("idle");
   }
 
   /** Death ends the hunt loop; tasker owns its own stop path when it is controlling hunt. */
@@ -194,6 +298,7 @@ export class HuntService extends Service {
     if (settings.autoHuntEnabled && !settings.autoTaskerEnabled) {
       this.ctx.session.updateSettings({ autoHuntEnabled: false });
     }
+    this.sawReadyCheckWhileAwaiting = false;
     if (this.flow.phase !== "idle") {
       this.setFlowPhase("idle");
     }
@@ -207,15 +312,47 @@ export class HuntService extends Service {
     return loot?.isBusyWithPostHuntLoot() === true;
   }
 
+  /** Leave training when auto-hunt has a startable hunt ready to claim idle. */
+  private async leaveTrainingIfAutoHuntClaims(options: {
+    isLeader: boolean;
+    huntValid: boolean;
+  }): Promise<{ ok: boolean; error?: string }> {
+    if (
+      !isInActiveTraining(this.ctx.session) ||
+      !isAutoHuntRestartEnabledGuard(this.ctx.settings.get()) ||
+      !options.isLeader ||
+      !options.huntValid
+    ) {
+      return { ok: true };
+    }
+
+    const left = await this.ctx.session.services
+      .tryGet<ToolsService>("tools")
+      ?.leaveTrainingIfActive();
+    if (left && left.finished === false && left.error) {
+      return { ok: false, error: left.error };
+    }
+    return { ok: true };
+  }
+
   private async tryAutoRestartAfterLoot(): Promise<void> {
     await this.traceFlow("auto-restart", async (trace) => {
       const settings = this.ctx.settings.get();
       const isLeader = isPartyLeader(this.identity());
       const selectedHuntId = this.battle.selectedHuntId;
+      const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
+
+      const leftTraining = await this.leaveTrainingIfAutoHuntClaims({ isLeader, huntValid });
+      trace.guard("left_training", leftTraining.ok, leftTraining.error);
+      if (!leftTraining.ok) {
+        trace.finish("failed", { error: leftTraining.error });
+        return;
+      }
+
       const alreadyHunting =
         this.isHunting() || this.partyState.partyStatus === "hunting";
+      const awaitingReady = this.isAwaitingPartyReady();
       const handlingLoot = this.isLootBlockingRestart();
-      const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
 
       const canRestart = canRestartHunt({
         isLeader,
@@ -223,8 +360,9 @@ export class HuntService extends Service {
         autoHuntEnabled: settings.autoHuntEnabled,
         autoTaskerEnabled: settings.autoTaskerEnabled,
         handlingLoot,
-        alreadyHunting,
-        hasAllBlessings: this.playerHasAllBlessings(),
+        alreadyHunting: alreadyHunting || awaitingReady,
+        // Blessings are synced/bought inside startHuntInternal — don't block restart
+        // when the snapshot is still missing after a game reload.
       });
 
       trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
@@ -232,7 +370,8 @@ export class HuntService extends Service {
       trace.guard("is_leader", isLeader);
       trace.guard("hunt_valid", huntValid);
       trace.guard("not_already_hunting", !alreadyHunting);
-      trace.guard("has_all_blessings", this.playerHasAllBlessings());
+      trace.guard("not_awaiting_ready", !awaitingReady);
+      trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
       if (!canRestart || selectedHuntId == null || !huntValid) {
         trace.finish("skipped", { error: "restart guards failed" });
@@ -249,6 +388,17 @@ export class HuntService extends Service {
         });
       }
     });
+  }
+
+  /**
+   * When the Battle selector changes to a startable hunt (or auto-hunt turns on),
+   * claim idle — including leaving training — and start if eligible.
+   */
+  async tryStartFromSelectionChange(): Promise<void> {
+    if (!this.ctx.isMasterEnabled("hunt")) {
+      return;
+    }
+    await this.tryAutoRestartAfterLoot();
   }
 
   private async handleAutoHuntEventInternal(event: GameEvent): Promise<void> {
@@ -317,12 +467,11 @@ export class HuntService extends Service {
           autoHuntEnabled: settings.autoHuntEnabled,
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot: false,
-          hasAllBlessings: this.playerHasAllBlessings(),
         });
         trace.guard("can_restart", canRestart);
         trace.guard("is_leader", isLeader);
         trace.guard("has_selected_hunt", selectedHuntId != null);
-        trace.guard("has_all_blessings", this.playerHasAllBlessings());
+        trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
         if (!canRestart || selectedHuntId == null) {
           trace.finish("skipped", { error: "restart guards failed" });
@@ -344,10 +493,19 @@ export class HuntService extends Service {
       if (message.type === ReceiveMessageTypes.PARTY_SNAPSHOT) {
         const isLeader = isPartyLeader(this.identity());
         const selectedHuntId = this.battle.selectedHuntId;
+        const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
+
+        const leftTraining = await this.leaveTrainingIfAutoHuntClaims({ isLeader, huntValid });
+        trace.guard("left_training", leftTraining.ok, leftTraining.error);
+        if (!leftTraining.ok) {
+          trace.finish("failed", { error: leftTraining.error });
+          return;
+        }
+
         const alreadyHunting =
           this.isHunting() || this.partyState.partyStatus === "hunting";
+        const awaitingReady = this.isAwaitingPartyReady();
         const handlingLoot = this.isLootBlockingRestart();
-        const huntValid = selectedHuntId != null && isStartableHuntId(selectedHuntId);
 
         const canRestart = canRestartHunt({
           isLeader,
@@ -355,8 +513,7 @@ export class HuntService extends Service {
           autoHuntEnabled: settings.autoHuntEnabled,
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot,
-          alreadyHunting,
-          hasAllBlessings: this.playerHasAllBlessings(),
+          alreadyHunting: alreadyHunting || awaitingReady,
         });
 
         trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
@@ -364,7 +521,8 @@ export class HuntService extends Service {
         trace.guard("is_leader", isLeader);
         trace.guard("hunt_valid", huntValid);
         trace.guard("not_already_hunting", !alreadyHunting);
-        trace.guard("has_all_blessings", this.playerHasAllBlessings());
+        trace.guard("not_awaiting_ready", !awaitingReady);
+        trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
         if (!canRestart || selectedHuntId == null || !huntValid) {
           trace.finish("skipped", { error: "restart guards failed" });
@@ -388,13 +546,12 @@ export class HuntService extends Service {
     });
   }
 
-  /** Start a hunt with solo-party preparation. Locked to prevent concurrent starts. */
+  /** Start a hunt. Locked to prevent concurrent starts. */
   async startHunt(
     huntId: number,
     options: {
       force?: boolean;
       timeoutMs?: number;
-      awaitPartyAfterDisband?: boolean;
       restarting?: boolean;
     } = {}
   ): Promise<{ ok: boolean; error?: string; deferred?: boolean }> {
@@ -408,7 +565,6 @@ export class HuntService extends Service {
     options: {
       force?: boolean;
       timeoutMs?: number;
-      awaitPartyAfterDisband?: boolean;
       restarting?: boolean;
     } = {},
     trace?: FlowTraceRecorder
@@ -446,51 +602,22 @@ export class HuntService extends Service {
       return { ok: true };
     }
 
+    if (isInActiveTraining(session)) {
+      const left = await session.services.tryGet<ToolsService>("tools")?.leaveTrainingIfActive();
+      if (left && left.finished === false && left.error) {
+        this.setFlowPhase("failed", { lastError: left.error });
+        this.setFlowPhase("idle");
+        trace?.finish("failed", { error: left.error });
+        return { ok: false, error: left.error };
+      }
+    }
+
     const blessGate = await this.ensureAllBlessingsForHunt(trace);
     if (!blessGate.ok) {
       this.setFlowPhase("failed", { lastError: blessGate.error ?? "missing blessings" });
       this.setFlowPhase("idle");
       trace?.finish("failed", { error: blessGate.error });
       return { ok: false, error: blessGate.error };
-    }
-
-    if (!options.restarting) {
-      this.setFlowPhase("preparing_party", {
-        startedAt: this.flow.startedAt ?? Date.now(),
-        lastError: null,
-      });
-    } else {
-      this.setFlowPhase("preparing_party");
-    }
-    trace?.setPhase("preparing_party");
-
-    const disband = await this.disbandSoloPartyIfNeeded();
-    if (disband?.success === false) {
-      const error = disband.errorMessage ?? "Failed to disband solo party.";
-      this.setFlowPhase("failed", { lastError: error });
-      this.setFlowPhase("idle");
-      trace?.finish("failed", { error });
-      return { ok: false, error };
-    }
-
-    if (disband?.success) {
-      if (options.awaitPartyAfterDisband) {
-        try {
-          await waitForPartySnapshot(session, { timeoutMs });
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Failed to refresh party after disband.";
-          this.setFlowPhase("failed", { lastError: message });
-          this.setFlowPhase("idle");
-          trace?.finish("failed", { error: message });
-          return { ok: false, error: message };
-        }
-      } else {
-        trace?.finish("ok", { result: { deferred: true } });
-        return { ok: true, deferred: true };
-      }
     }
 
     this.setFlowPhase("starting");
@@ -534,7 +661,15 @@ export class HuntService extends Service {
       return { ok: false, error };
     }
 
+    const readyCheckActive = this.partyState.readyCheckId != null;
+    const bootstrapped =
+      outcome.response?.type === ReceiveMessageTypes.HUNT_BOOTSTRAP || this.isHunting();
+
     if (outcome.success === false) {
+      // Timed out / failed after the party ready-check already opened — wait for it.
+      if (readyCheckActive) {
+        return this.enterAwaitingReady(trace);
+      }
       const error = outcome.errorMessage ?? "Hunt start failed.";
       this.setFlowPhase("failed", { lastError: error });
       this.setFlowPhase("idle");
@@ -542,16 +677,20 @@ export class HuntService extends Service {
       return { ok: false, error };
     }
 
+    if (bootstrapped) {
+      this.setFlowPhase("active");
+      trace?.setPhase("active");
+      return { ok: true };
+    }
+
+    // party:action_result / ready-check snapshot — hunt starts after everyone confirms.
+    if (readyCheckActive || (this.partyState.partyMemberCount ?? 0) > 1) {
+      return this.enterAwaitingReady(trace);
+    }
+
     this.setFlowPhase("active");
     trace?.setPhase("active");
     return { ok: true };
-  }
-
-  private async disbandSoloPartyIfNeeded() {
-    if (this.partyState.partyMemberCount !== 1 || !isPartyLeader(this.identity())) {
-      return null;
-    }
-    return this.ctx.session.commands.run(SendMessageTypes.PARTY_DISBAND, {});
   }
 
   /** Leave the current hunt if one is active. */
@@ -594,14 +733,15 @@ export class HuntService extends Service {
   }
 
   /**
-   * True while a hunt start/restart is in flight (party prep, START_HUNT, or restarting).
-   * Ready-checks during this window should be confirmed even if Tools auto-confirm is off.
+   * True while a hunt start/restart is in flight (START_HUNT, restarting, or
+   * waiting on party ready-check). Ready-checks during this window should be
+   * confirmed even if Tools auto-confirm is off.
    */
   isAwaitingHuntStart(): boolean {
     return (
-      this.flow.phase === "preparing_party" ||
       this.flow.phase === "starting" ||
-      this.flow.phase === "restarting"
+      this.flow.phase === "restarting" ||
+      this.flow.phase === "awaiting_ready"
     );
   }
 
@@ -745,6 +885,7 @@ export class HuntService extends Service {
     }
 
     session.updateSettings({ autoHuntEnabled: false });
+    this.sawReadyCheckWhileAwaiting = false;
     this.setFlowPhase("idle");
 
     return { ok: true, message: "Auto hunt stopped.", state: session.botState };

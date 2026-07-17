@@ -1,8 +1,11 @@
 import type { BotState } from "../types";
 import { appendLog } from "./projections/logs";
 import { parseMessage, ReceiveMessageTypes, SendMessageTypes } from "../protocol";
-import { shouldAttributeMarketSnapshotToItem } from "../market/attribution";
+import { attributeInFlightEmptyMarketSnapshot } from "../market/attribution";
 import { MarketService } from "./services/market.service";
+import { ToolsService } from "./services/tools.service";
+import type { BattleService } from "./services/battle.service";
+import type { HuntService } from "./services/hunt.service";
 import {
   emptyDebugTelemetry,
   recordDebugCommand,
@@ -148,8 +151,32 @@ export class GameSession {
   }
 
   updateSettings(patch: Partial<Settings>): void {
+    const prevAutoTraining = this.settings.autoTrainingEnabled;
+    const prevSelectedHuntId = this.settings.selectedHuntId;
+    const prevAutoHunt = this.settings.autoHuntEnabled;
     this.settings = { ...this.settings, ...patch };
     this.emitChange();
+
+    if (
+      patch.autoTrainingEnabled !== undefined &&
+      patch.autoTrainingEnabled !== prevAutoTraining
+    ) {
+      this.services.tryGet<ToolsService>("tools")?.syncAutoTrainingFromSettings();
+    }
+
+    if (patch.selectedHuntId !== undefined && patch.selectedHuntId !== prevSelectedHuntId) {
+      this.services.tryGet<BattleService>("battle")?.applySelectedHuntId(patch.selectedHuntId);
+      void this.services.tryGet<HuntService>("hunt")?.tryStartFromSelectionChange();
+    } else if (
+      patch.autoHuntEnabled === true &&
+      prevAutoHunt !== true &&
+      this.settings.selectedHuntId != null
+    ) {
+      this.services
+        .tryGet<BattleService>("battle")
+        ?.applySelectedHuntId(this.settings.selectedHuntId);
+      void this.services.tryGet<HuntService>("hunt")?.tryStartFromSelectionChange();
+    }
   }
 
   updateView(patch: SessionViewPatch): void {
@@ -341,7 +368,7 @@ export class GameSession {
     if (inFlight == null || inFlight <= 0) {
       return null;
     }
-    return shouldAttributeMarketSnapshotToItem(data, inFlight) ? inFlight : null;
+    return attributeInFlightEmptyMarketSnapshot(data, inFlight);
   }
 
   private async handleWireMessage(wire: WireMessage): Promise<void> {

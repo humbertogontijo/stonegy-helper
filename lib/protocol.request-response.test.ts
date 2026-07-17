@@ -94,7 +94,7 @@ describe("matchResponse", () => {
     ).toBe(false);
   });
 
-  it("resolves start_hunt on party:action_result or hunt_bootstrap", () => {
+  it("resolves start_hunt on party:action_result, hunt_bootstrap, or ready-check snapshot", () => {
     expect(
       matchResponse(
         { type: "start_hunt", data: { huntId: 61 } },
@@ -111,6 +111,31 @@ describe("matchResponse", () => {
         { type: "hunt_bootstrap", data: { huntId: 61 } }
       )
     ).toBe(true);
+
+    expect(
+      matchResponse(
+        { type: "start_hunt", data: { huntId: 61 } },
+        {
+          type: "party:snapshot",
+          data: {
+            party: {
+              status: "idle",
+              readyCheck: { id: "rc-1", memberStatuses: { "hero-1": "pending" } },
+            },
+          },
+        }
+      )
+    ).toBe(true);
+
+    expect(
+      matchResponse(
+        { type: "start_hunt", data: { huntId: 61 } },
+        {
+          type: "party:snapshot",
+          data: { party: { status: "idle", readyCheck: null } },
+        }
+      )
+    ).toBe(false);
 
     expect(
       matchResponse(

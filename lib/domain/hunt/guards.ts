@@ -39,7 +39,9 @@ export type CanRestartHuntInput = {
   handlingLoot: boolean;
   /** When true, party/hunt is already active — restart should not start again. */
   alreadyHunting?: boolean;
-  /** When false, restart must wait until the player has all 7 blessings. */
+  /** When false, restart must wait until blessings are known — prefer gating inside
+   *  startHuntInternal via ensureAllBlessingsForHunt so a missing snapshot after reload
+   *  can still sync. Optional here for callers that already synced. */
   hasAllBlessings?: boolean;
 };
 

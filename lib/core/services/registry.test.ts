@@ -148,7 +148,7 @@ describe("ServiceRegistry", () => {
 
   it("setMasters(false) stops service and applies off patch", async () => {
     const session = new GameSession(new MockTransport(), {
-      settings: { autoTrainingEnabled: true, autoConfirmReadyCheck: true },
+      settings: { autoTrainingEnabled: true, autoConfirmPartyHunt: true },
     });
     const registry = new ServiceRegistry({ session });
     const stop = vi.fn();
@@ -166,7 +166,7 @@ describe("ServiceRegistry", () => {
 
     expect(stop).toHaveBeenCalledOnce();
     expect(session.settings.autoTrainingEnabled).toBe(false);
-    expect(session.settings.autoConfirmReadyCheck).toBe(false);
+    expect(session.settings.autoConfirmPartyHunt).toBe(false);
   });
 });
 

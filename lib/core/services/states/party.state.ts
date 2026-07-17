@@ -19,6 +19,7 @@ function defaultParty(): PartyProjection {
     partyMemberCount: null,
     partySnapshotSynced: false,
     lastSnapshotAt: null,
+    readyCheckId: null,
     partyLootSplitter: null,
     lootSplitCompletedByPlayerId: {},
     lootSplitProgressFingerprint: null,
@@ -80,6 +81,10 @@ export class PartyState extends DomainState {
 
   get lastSnapshotAt(): number | null {
     return this.party.lastSnapshotAt;
+  }
+
+  get readyCheckId(): string | null {
+    return this.party.readyCheckId;
   }
 
   get partyLootSplitter(): PartyLootSplitter | null {
@@ -151,6 +156,8 @@ export class PartyState extends DomainState {
 
       const memberCount = readPartyMemberCount(party);
       const nextSplitter = party?.lootSplitter ?? null;
+      const readyCheckId =
+        typeof party?.readyCheck?.id === "string" ? party.readyCheck.id : null;
       this.party = {
         ...this.party,
         partySnapshotSynced: true,
@@ -158,6 +165,7 @@ export class PartyState extends DomainState {
         currentHuntId: typeof party?.currentHuntId === "number" ? party.currentHuntId : null,
         partyLeaderId: readId(party?.leaderId) ?? this.party.partyLeaderId,
         partyMemberCount: memberCount ?? this.party.partyMemberCount,
+        readyCheckId,
         lastSnapshotAt: Date.now(),
         partyLootSplitter: nextSplitter,
         ...reconcileLootSplitProgress(this.party, nextSplitter),

@@ -140,14 +140,19 @@ export async function loadPersistedSettings(characterId?: string | null): Promis
       marketImbuementItems?: boolean;
       marketCraftItems?: boolean;
       marketEnchantItems?: boolean;
+      /** @deprecated Renamed to autoConfirmPartyHunt */
+      autoConfirmReadyCheck?: boolean;
+      /** @deprecated Renamed to autoDisbandSoloParty */
+      autoDisbandPartyWhenAlone?: boolean;
     };
     const lootSellModeByItemId = normalizeLootSellModes(
       (raw.lootSellModeByItemId as Record<number, string> | undefined) ?? {}
     );
 
     Object.assign(settings, {
-      autoConfirmReadyCheck: raw.autoConfirmReadyCheck,
+      autoConfirmPartyHunt: raw.autoConfirmPartyHunt ?? raw.autoConfirmReadyCheck,
       autoBuyBless: raw.autoBuyBless,
+      autoDisbandSoloParty: raw.autoDisbandSoloParty ?? raw.autoDisbandPartyWhenAlone,
       autoAcceptPartyInvite: raw.autoAcceptPartyInvite,
       partyInviteAcceptMode: raw.partyInviteAcceptMode === "allowlist" ? "allowlist" : "anyone",
       partyInviteAllowlistNames: Array.isArray(raw.partyInviteAllowlistNames)
@@ -227,8 +232,9 @@ export function pickPersistedSettings(state: BotState) {
     state.settings.lootSellModeByItemId as Record<number, string>
   );
   return {
-    autoConfirmReadyCheck: state.settings.autoConfirmReadyCheck,
+    autoConfirmPartyHunt: state.settings.autoConfirmPartyHunt,
     autoBuyBless: state.settings.autoBuyBless,
+    autoDisbandSoloParty: state.settings.autoDisbandSoloParty,
     autoAcceptPartyInvite: state.settings.autoAcceptPartyInvite,
     partyInviteAcceptMode: state.settings.partyInviteAcceptMode,
     partyInviteAllowlistNames: state.settings.partyInviteAllowlistNames,

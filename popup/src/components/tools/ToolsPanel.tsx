@@ -32,12 +32,16 @@ const SKILL_OPTIONS: Array<{ value: SkillToTrain; label: string }> = [
 ];
 
 export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProps) {
-  const [autoConfirmReadyCheck, setAutoConfirmReadyCheck] = usePersistedField(
-    state?.settings.autoConfirmReadyCheck,
+  const [autoConfirmPartyHunt, setAutoConfirmPartyHunt] = usePersistedField(
+    state?.settings.autoConfirmPartyHunt,
     false
   );
   const [autoBuyBless, setAutoBuyBless] = usePersistedField(
     state?.settings.autoBuyBless,
+    false
+  );
+  const [autoDisbandSoloParty, setAutoDisbandSoloParty] = usePersistedField(
+    state?.settings.autoDisbandSoloParty,
     false
   );
   const [autoAcceptPartyInvite, setAutoAcceptPartyInvite] = usePersistedField(
@@ -78,8 +82,9 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
 
   const saveTools = (overrides?: Record<string, unknown>) =>
     saveSettings({
-      autoConfirmReadyCheck,
+      autoConfirmPartyHunt,
       autoBuyBless,
+      autoDisbandSoloParty,
       autoAcceptPartyInvite,
       partyInviteAcceptMode,
       partyInviteAllowlistNames: parsePartyInviteAllowlist(partyInviteAllowlistText),
@@ -95,11 +100,14 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
     state,
     saveSettings: saveTools,
     onLocalStateReset: (updates) => {
-      if (updates.autoConfirmReadyCheck === false) {
-        setAutoConfirmReadyCheck(false);
+      if (updates.autoConfirmPartyHunt === false) {
+        setAutoConfirmPartyHunt(false);
       }
       if (updates.autoBuyBless === false) {
         setAutoBuyBless(false);
+      }
+      if (updates.autoDisbandSoloParty === false) {
+        setAutoDisbandSoloParty(false);
       }
       if (updates.autoAcceptPartyInvite === false) {
         setAutoAcceptPartyInvite(false);
@@ -169,14 +177,14 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
             }}
           />
           <StonegyToggle
-            id="auto-ready-check"
-            label="Auto confirm ready check"
-            checked={autoConfirmReadyCheck}
+            id="auto-confirm-party-hunt"
+            label="Auto confirm party hunt"
+            checked={autoConfirmPartyHunt}
             disabled={!masterOn}
             onChange={(event) => {
               const checked = event.target.checked;
-              setAutoConfirmReadyCheck(checked);
-              void saveTools({ autoConfirmReadyCheck: checked });
+              setAutoConfirmPartyHunt(checked);
+              void saveTools({ autoConfirmPartyHunt: checked });
             }}
           />
           <StonegyToggle
@@ -188,6 +196,17 @@ export function ToolsPanel({ state, saveSettings, showFeedback }: ToolsPanelProp
               const checked = event.target.checked;
               setAutoBuyBless(checked);
               void saveTools({ autoBuyBless: checked });
+            }}
+          />
+          <StonegyToggle
+            id="auto-disband-solo-party"
+            label="Auto disband solo party"
+            checked={autoDisbandSoloParty}
+            disabled={!masterOn}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setAutoDisbandSoloParty(checked);
+              void saveTools({ autoDisbandSoloParty: checked });
             }}
           />
         </FeatureInputs>

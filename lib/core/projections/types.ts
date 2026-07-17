@@ -53,6 +53,8 @@ export interface PartyProjection {
   partyMemberCount: number | null;
   partySnapshotSynced: boolean;
   lastSnapshotAt: number | null;
+  /** Active party ready-check id while members confirm (null when none). */
+  readyCheckId: string | null;
   partyLootSplitter: PartyLootSplitter | null;
   /** Tracks gold already sent during an in-progress loot split (same splitter fingerprint). */
   lootSplitCompletedByPlayerId: Record<string, number>;

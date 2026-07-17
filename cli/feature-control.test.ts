@@ -55,8 +55,9 @@ describe("getFeatureMasterOffPatch", () => {
 
   it("clears party tools with tools settings", () => {
     expect(getFeatureMasterOffPatch("tools")).toEqual({
-      autoConfirmReadyCheck: false,
+      autoConfirmPartyHunt: false,
       autoBuyBless: false,
+      autoDisbandSoloParty: false,
       autoAcceptPartyInvite: false,
       autoTrainingEnabled: false,
     });

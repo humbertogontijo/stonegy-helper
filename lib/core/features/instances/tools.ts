@@ -1,11 +1,11 @@
 import type { SubFeature, Feature } from "../types";
 
-export const toolsReadyCheckSubFeature: SubFeature = {
-  id: "tools.readyCheck",
+export const toolsConfirmPartyHuntSubFeature: SubFeature = {
+  id: "tools.confirmPartyHunt",
   featureId: "tools",
-  label: "Auto confirm ready check",
+  label: "Auto confirm party hunt",
   isEnabled(session) {
-    return session.settings.autoConfirmReadyCheck;
+    return session.settings.autoConfirmPartyHunt;
   },
 };
 
@@ -15,6 +15,15 @@ export const toolsAutoBuyBlessSubFeature: SubFeature = {
   label: "Auto buy bless",
   isEnabled(session) {
     return session.settings.autoBuyBless;
+  },
+};
+
+export const toolsAutoDisbandSoloPartySubFeature: SubFeature = {
+  id: "tools.autoDisbandSoloParty",
+  featureId: "tools",
+  label: "Auto disband solo party",
+  isEnabled(session) {
+    return session.settings.autoDisbandSoloParty;
   },
 };
 
@@ -42,8 +51,9 @@ export const toolsFeature: Feature = {
   description: "Utility automations that run while the character is idle.",
   dependsOn: [],
   subFeatures: [
-    toolsReadyCheckSubFeature,
+    toolsConfirmPartyHuntSubFeature,
     toolsAutoBuyBlessSubFeature,
+    toolsAutoDisbandSoloPartySubFeature,
     toolsAcceptPartyInviteSubFeature,
     toolsAutoTrainingSubFeature,
   ],

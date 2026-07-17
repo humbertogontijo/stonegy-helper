@@ -115,6 +115,9 @@ describe("extension storage", () => {
         lowestSellPrice: 10,
         highestBuyPrice: 5,
         ownOrderReferencePrice: null,
+        sellOrderCount: 1,
+        buyOrderCount: 1,
+        tradableAmount: 10,
         updatedAt: Date.now(),
       },
     };

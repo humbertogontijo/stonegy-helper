@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { SendMessageTypes } from "../../protocol";
+import { encodeBossHuntId } from "../../hunt-ids";
+import { ReceiveMessageTypes, SendMessageTypes } from "../../protocol";
 import { GameSession } from "../session";
 import type { Transport } from "../transport";
 import { defaultSettings } from "../settings";
@@ -100,6 +101,36 @@ describe("auto training", () => {
     expect(session.commands.run).not.toHaveBeenCalled();
   });
 
+  it("starts training when auto hunt is on but selected hunt is not startable", async () => {
+    const session = createSession({
+      autoHuntEnabled: true,
+      selectedHuntId: encodeBossHuntId(1),
+      autoTrainingIdleDelaySec: 1,
+    });
+    session.updateView({
+      character: { ...session.view.character, characterId: "me" },
+      party: { ...session.view.party, partyLeaderId: "me", partySnapshotSynced: true },
+    });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    expect(tools(session).canAutoTrain()).toBe(true);
+
+    tools(session).scheduleAutoTrainingCheck();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
   it("does not start while selling loot", async () => {
     const session = createSession({ autoSellLoot: true });
     session.services.setPlayerState("selling_loot");
@@ -139,6 +170,64 @@ describe("auto training", () => {
     await Promise.resolve();
 
     expect(session.commands.run).not.toHaveBeenCalled();
+  });
+
+  it("does not reset the idle timer on repeated party snapshots", async () => {
+    const session = createSession({ autoTrainingIdleDelaySec: 5 });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    const partySnapshot = {
+      kind: "json" as const,
+      message: {
+        type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+        data: { party: { status: "idle", members: [] } },
+      },
+      receivedAt: Date.now(),
+    };
+
+    await tools(session).onEvent(partySnapshot);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // More snapshots while waiting must not restart the 5s countdown.
+    await tools(session).onEvent(partySnapshot);
+    await tools(session).onEvent(partySnapshot);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    await Promise.resolve();
+    expect(session.commands.run).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it("schedules training when auto training is toggled on", async () => {
+    const session = createSession({ autoTrainingEnabled: false });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    session.updateSettings({ autoTrainingEnabled: true });
+    await vi.advanceTimersByTimeAsync(DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC * 1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
   });
 
   it("waits for training bootstrap before subscribing presence", async () => {

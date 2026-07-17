@@ -57,6 +57,19 @@ export interface InventoryLootSellEntry {
   needsMarketSync?: boolean;
 }
 
+/** Inventory rows held for keep/market (deselected from in-hunt auto loot/quick sell). */
+export interface InventoryKeepOrMarketEntry {
+  itemId: number;
+  name: string;
+  amount: number;
+  rule: Extract<LootSellRule, "keep" | "market">;
+  /** Lowest competing sell from cache (null if unsynced). */
+  lowestSellPrice: number | null;
+  /** Suggested sell-order price (undercut), or null if no cache reference. */
+  listPrice: number | null;
+  needsMarketSync: boolean;
+}
+
 type InventoryLike = {
   items?: InventoryItemEntry[] | null;
   gameQuickSellDeselectedItemIds?: number[] | null;
@@ -466,6 +479,43 @@ export function getInventoryItemsToSellOnHuntFinish(
   return getInventoryLootSellEntries(state, pricing)
     .filter((entry) => entry.venue !== "none")
     .map((entry) => entry.itemId);
+}
+
+/**
+ * Inventory items whose sell rule is keep or market — filtered out of in-hunt
+ * auto loot / quick sell so they can be listed on market (or kept).
+ */
+export function getInventoryKeepOrMarketEntries(
+  state: InventoryLootContext,
+  pricing: MarketPricingOptions = resolvePricing(state)
+): InventoryKeepOrMarketEntry[] {
+  const sellable = sellableInventory(state.inventory);
+
+  return Object.entries(sellable)
+    .map(([itemIdRaw, amount]) => [Number(itemIdRaw), amount] as const)
+    .filter(([itemId, amount]) => isSellableInventoryItem(itemId, amount) && amount > 0)
+    .filter(([itemId]) => getItemById(itemId) != null)
+    .map(([itemId, amount]) => {
+      const rule = resolveLootSellRule(state, itemId);
+      if (rule !== "keep" && rule !== "market") {
+        return null;
+      }
+
+      const marketPrice = state.market.marketPrices[itemId] ?? null;
+      const listPrice = marketListPriceFromCache(marketPrice, pricing);
+
+      return {
+        itemId,
+        name: getItemName(itemId) ?? `Item #${itemId}`,
+        amount: getInventoryItemAmount(sellable, itemId) || amount,
+        rule,
+        lowestSellPrice: marketPrice?.lowestSellPrice ?? null,
+        listPrice,
+        needsMarketSync: marketPrice == null,
+      } satisfies InventoryKeepOrMarketEntry;
+    })
+    .filter((entry): entry is InventoryKeepOrMarketEntry => entry != null)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.itemId - right.itemId);
 }
 
 export function hasInventoryLootToSell(

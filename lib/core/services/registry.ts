@@ -293,6 +293,7 @@ export class ServiceRegistry {
         partyMemberCount: null,
         partySnapshotSynced: false,
         lastSnapshotAt: null,
+        readyCheckId: null,
         partyLootSplitter: null,
         lootSplitCompletedByPlayerId: {},
         lootSplitProgressFingerprint: null,

@@ -409,82 +409,21 @@ describe("player_death stops hunt automation", () => {
 });
 
 describe("event-driven auto-hunt pipeline", () => {
-  it("defers hunt start after solo disband until PARTY_SNAPSHOT arrives", async () => {
+  it("starts the hunt directly without disbanding a solo party", async () => {
     const transport = new RelayTransport();
     const session = leaderSession(transport, {
       autoHuntEnabled: true,
       selectedHuntId: 1,
     });
 
-    const runSpy = vi.spyOn(session.commands, "run").mockImplementation(async (type) => {
-      if (type === SendMessageTypes.PARTY_DISBAND) {
-        return { sent: true, success: true };
-      }
-      if (type === SendMessageTypes.START_HUNT) {
-        return { sent: true, success: true };
-      }
-      return { sent: true };
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({
+      sent: true,
+      success: true,
     });
 
-    const deferred = await session.services.get<HuntService>("hunt").startHunt(1, { force: true });
-    expect(deferred).toEqual({ ok: true, deferred: true });
-    expect(runSpy).toHaveBeenCalledWith(SendMessageTypes.PARTY_DISBAND, {});
-    expect(runSpy).not.toHaveBeenCalledWith(
-      SendMessageTypes.START_HUNT,
-      expect.anything(),
-      expect.anything()
-    );
-
-    transport.receive({
-      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
-      data: {
-        party: { status: "idle", members: [] },
-        meId: "hero-1",
-      },
-    });
-    await session.drainMessages();
-
-    expect(runSpy).toHaveBeenCalledWith(
-      SendMessageTypes.START_HUNT,
-      expect.objectContaining({ huntId: 1 }),
-      expect.anything()
-    );
-  });
-
-  it("waits for party snapshot after disband on imperative UI path", async () => {
-    const transport = new RelayTransport();
-    const session = leaderSession(transport, { selectedHuntId: 1 });
-
-    let disbanded = false;
-    const runSpy = vi.spyOn(session.commands, "run").mockImplementation(async (type) => {
-      if (type === SendMessageTypes.PARTY_DISBAND) {
-        disbanded = true;
-        return { sent: true, success: true };
-      }
-      if (type === SendMessageTypes.START_HUNT) {
-        return { sent: true, success: true };
-      }
-      return { sent: true };
-    });
-
-    const waitPromise = session.services.get<HuntService>("hunt").startHunt(1, {
-      force: true,
-      awaitPartyAfterDisband: true,
-    });
-
-    await vi.waitFor(() => expect(disbanded).toBe(true));
-
-    transport.receive({
-      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
-      data: {
-        party: { status: "idle", members: [{ id: "hero-1", name: "Hero" }] },
-        meId: "hero-1",
-      },
-    });
-    await session.drainMessages();
-
-    const result = await waitPromise;
-    expect(result.ok).toBe(true);
+    const result = await session.services.get<HuntService>("hunt").startHunt(1, { force: true });
+    expect(result).toEqual({ ok: true });
+    expect(runSpy).not.toHaveBeenCalledWith(SendMessageTypes.PARTY_DISBAND, {});
     expect(runSpy).toHaveBeenCalledWith(
       SendMessageTypes.START_HUNT,
       expect.objectContaining({ huntId: 1 }),
@@ -548,28 +487,15 @@ describe("event-driven auto-hunt pipeline", () => {
       selectedHuntId: 1,
     });
 
-    const runSpy = vi.spyOn(session.commands, "run").mockImplementation(async (type) => {
-      if (type === SendMessageTypes.PARTY_DISBAND || type === SendMessageTypes.START_HUNT) {
-        return { sent: true, success: true };
-      }
-      return { sent: true, success: true };
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({
+      sent: true,
+      success: true,
     });
 
     await session.services.dispatch({ kind: "loot_pipeline_finished" });
     await session.drainMessages();
 
-    // Solo party disbands first; start is deferred until the next PARTY_SNAPSHOT.
-    expect(runSpy).toHaveBeenCalledWith(SendMessageTypes.PARTY_DISBAND, {});
-
-    transport.receive({
-      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
-      data: {
-        party: { status: "idle", members: [] },
-        meId: "hero-1",
-      },
-    });
-    await session.drainMessages();
-
+    expect(runSpy).not.toHaveBeenCalledWith(SendMessageTypes.PARTY_DISBAND, {});
     expect(runSpy).toHaveBeenCalledWith(
       SendMessageTypes.START_HUNT,
       expect.objectContaining({ huntId: 1 }),
@@ -583,7 +509,7 @@ describe("event-driven auto-hunt pipeline", () => {
     const session = leaderSession(transport, {
       autoHuntEnabled: true,
       selectedHuntId: 1,
-      autoConfirmReadyCheck: true,
+      autoConfirmPartyHunt: true,
     });
     session.view = patchSessionView(session.view, {
       party: {
@@ -664,7 +590,7 @@ describe("event-driven auto-hunt pipeline", () => {
     const session = leaderSession(transport, {
       autoHuntEnabled: true,
       selectedHuntId: 1,
-      autoConfirmReadyCheck: false,
+      autoConfirmPartyHunt: false,
     });
     session.view = patchSessionView(session.view, {
       party: {
@@ -727,5 +653,206 @@ describe("event-driven auto-hunt pipeline", () => {
     expect(releaseStartHunt).toBeTypeOf("function");
     releaseStartHunt!();
     await session.drainMessages();
+  }, 10_000);
+
+  it("enters awaiting_ready on party ready-check and does not start hunt again", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+      autoConfirmPartyHunt: true,
+    });
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partyMemberCount: 2,
+        partyLeaderId: "hero-1",
+      },
+    });
+
+    const readyCheckSnapshot = {
+      meId: "hero-1",
+      party: {
+        status: "idle" as const,
+        members: [{ id: "hero-1" }, { id: "member-2" }],
+        leaderId: "hero-1",
+        readyCheck: {
+          id: "rc-wait",
+          initiatedBy: "hero-1",
+          memberStatuses: {
+            "hero-1": "pending",
+            "member-2": "pending",
+          },
+        },
+      },
+    };
+
+    const originalSend = transport.send.bind(transport);
+    transport.send = async (opcode, data) => {
+      await originalSend(opcode, data);
+      const msg = JSON.parse(data) as StonegyMessage;
+      if (msg.type === SendMessageTypes.START_HUNT) {
+        queueMicrotask(() => {
+          transport.receive({
+            type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+            data: readyCheckSnapshot,
+          });
+        });
+      }
+      if (msg.type === SendMessageTypes.PARTY_READY_CHECK_CONFIRM) {
+        queueMicrotask(() => {
+          transport.receive({
+            type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+            data: {
+              ...readyCheckSnapshot,
+              party: {
+                ...readyCheckSnapshot.party,
+                readyCheck: {
+                  ...readyCheckSnapshot.party.readyCheck,
+                  memberStatuses: {
+                    "hero-1": "confirmed",
+                    "member-2": "pending",
+                  },
+                },
+              },
+            },
+          });
+        });
+      }
+    };
+
+    await session.services.dispatch({ kind: "loot_pipeline_finished" });
+    await session.drainMessages();
+
+    const hunt = session.services.get<HuntService>("hunt");
+    expect(hunt.snapshot().huntFlow).toMatchObject({ phase: "awaiting_ready" });
+    expect(hunt.isAwaitingHuntStart()).toBe(true);
+
+    const startCount = transport.sent.filter((line) => line.includes('"start_hunt"')).length;
+    expect(startCount).toBe(1);
+
+    transport.receive({
+      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+      data: {
+        ...readyCheckSnapshot,
+        party: {
+          ...readyCheckSnapshot.party,
+          readyCheck: {
+            ...readyCheckSnapshot.party.readyCheck,
+            memberStatuses: {
+              "hero-1": "confirmed",
+              "member-2": "pending",
+            },
+          },
+        },
+      },
+    });
+    await session.drainMessages();
+
+    expect(transport.sent.filter((line) => line.includes('"start_hunt"')).length).toBe(1);
+    expect(hunt.snapshot().huntFlow).toMatchObject({ phase: "awaiting_ready" });
+  }, 10_000);
+
+  it("leaves awaiting_ready when ready_check_cancel arrives", async () => {
+    const transport = new RelayTransport();
+    const session = leaderSession(transport, {
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+      autoConfirmPartyHunt: false,
+    });
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partyMemberCount: 2,
+        partyLeaderId: "hero-1",
+      },
+    });
+
+    const originalSend = transport.send.bind(transport);
+    transport.send = async (opcode, data) => {
+      await originalSend(opcode, data);
+      const msg = JSON.parse(data) as StonegyMessage;
+      if (msg.type === SendMessageTypes.START_HUNT) {
+        queueMicrotask(() => {
+          transport.receive({
+            type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+            data: {
+              meId: "hero-1",
+              party: {
+                status: "idle",
+                members: [{ id: "hero-1" }, { id: "member-2" }],
+                leaderId: "hero-1",
+                readyCheck: {
+                  id: "rc-expire",
+                  initiatedBy: "hero-1",
+                  memberStatuses: {
+                    "hero-1": "pending",
+                    "member-2": "pending",
+                  },
+                },
+              },
+            },
+          });
+        });
+      }
+      if (msg.type === SendMessageTypes.PARTY_READY_CHECK_CONFIRM) {
+        queueMicrotask(() => {
+          transport.receive({
+            type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+            data: {
+              meId: "hero-1",
+              party: {
+                status: "idle",
+                members: [{ id: "hero-1" }, { id: "member-2" }],
+                leaderId: "hero-1",
+                readyCheck: {
+                  id: "rc-expire",
+                  initiatedBy: "hero-1",
+                  memberStatuses: {
+                    "hero-1": "confirmed",
+                    "member-2": "pending",
+                  },
+                },
+              },
+            },
+          });
+        });
+      }
+    };
+
+    await session.services.dispatch({ kind: "loot_pipeline_finished" });
+    await session.drainMessages();
+
+    const hunt = session.services.get<HuntService>("hunt");
+    expect(hunt.snapshot().huntFlow).toMatchObject({ phase: "awaiting_ready" });
+
+    // Avoid a post-cancel auto-restart racing this assertion.
+    session.updateSettings({ autoHuntEnabled: false });
+
+    transport.receive({
+      type: ReceiveMessageTypes.PARTY_ACTION_RESULT,
+      data: {
+        action: "ready_check_cancel",
+        success: false,
+        message: "Confirmação de prontidão expirou.",
+        display: "toast",
+      },
+    });
+    transport.receive({
+      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+      data: {
+        meId: "hero-1",
+        party: {
+          status: "idle",
+          members: [{ id: "hero-1" }, { id: "member-2" }],
+          leaderId: "hero-1",
+          readyCheck: null,
+        },
+      },
+    });
+    await session.drainMessages();
+
+    expect(hunt.snapshot().huntFlow).toMatchObject({ phase: "idle" });
+    expect(hunt.isAwaitingHuntStart()).toBe(false);
   }, 10_000);
 });

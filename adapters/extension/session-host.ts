@@ -6,7 +6,7 @@ import { defaultSettings } from "../../lib/core/settings";
 import { marketScanTickEvent } from "../../lib/core/services/events";
 import type { TasksService } from "../../lib/core/services/tasks.service";
 import { getHuntById } from "../../lib/hunts";
-import { normalizeRarityBorderTier } from "../../lib/items";
+import { getItemName, normalizeRarityBorderTier } from "../../lib/items";
 import {
   buildMessage,
   pingMessage,
@@ -644,7 +644,17 @@ export class ExtensionSessionHost {
           return { ok: false, error: "Invalid item ID" };
         }
         await this.session.services.get<LootService>("loot").syncMarketItemIds([itemId], true);
-        return { ok: true, state: this.state };
+        const price = this.state.market.marketPrices[itemId];
+        const name = getItemName(itemId) ?? `Item #${itemId}`;
+        const hasListing =
+          price?.lowestSellPrice != null || price?.ownOrderReferencePrice != null;
+        return {
+          ok: true,
+          state: this.state,
+          message: hasListing
+            ? `Fetched market price for ${name}`
+            : `No market listings for ${name}`,
+        };
       }
 
       case "bot:market-sync-items": {
@@ -700,15 +710,23 @@ export class ExtensionSessionHost {
         this.session.services.get<MarketService>("market").cancelFullMarketScan();
         return { ok: true, state: this.state, message: "Full scan stopped" };
 
-      case "bot:market-create":
-        await this.session.commands.run(SendMessageTypes.MARKET_CREATE_ORDER, {
+      case "bot:market-create": {
+        const outcome = await this.session.commands.run(SendMessageTypes.MARKET_CREATE_ORDER, {
           itemId: Number(message.itemId),
           eachPrice: Number(message.eachPrice),
           itemAmount: Number(message.itemAmount ?? 1),
           tier: Number(message.tier ?? 0),
           isBuyOrder: !!message.isBuyOrder,
         });
-        return { ok: true };
+        if (!outcome.sent || outcome.success === false) {
+          return {
+            ok: false,
+            error: outcome.errorMessage ?? "Failed to create market order",
+            state: this.state,
+          };
+        }
+        return { ok: true, state: this.state };
+      }
 
       case "bot:market-buy":
         await this.session.commands.sendRaw(
@@ -805,14 +823,18 @@ export class ExtensionSessionHost {
     );
 
     this.session.updateSettings({
-      autoConfirmReadyCheck:
-        message.autoConfirmReadyCheck === undefined
-          ? state.settings.autoConfirmReadyCheck
-          : !!message.autoConfirmReadyCheck,
+      autoConfirmPartyHunt:
+        message.autoConfirmPartyHunt === undefined
+          ? state.settings.autoConfirmPartyHunt
+          : !!message.autoConfirmPartyHunt,
       autoBuyBless:
         message.autoBuyBless === undefined
           ? state.settings.autoBuyBless
           : !!message.autoBuyBless,
+      autoDisbandSoloParty:
+        message.autoDisbandSoloParty === undefined
+          ? state.settings.autoDisbandSoloParty
+          : !!message.autoDisbandSoloParty,
       autoAcceptPartyInvite:
         message.autoAcceptPartyInvite === undefined
           ? state.settings.autoAcceptPartyInvite

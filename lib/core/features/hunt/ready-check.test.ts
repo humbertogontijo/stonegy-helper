@@ -75,7 +75,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     seedFullBlessings(session);
@@ -96,7 +96,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     session.view = patchSessionView(defaultSessionView(), {
@@ -141,7 +141,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     seedFullBlessings(session);
@@ -196,7 +196,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     session.view = patchSessionView(session.view, {
@@ -224,7 +224,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
         autoBuyBless: true,
       },
     });
@@ -322,7 +322,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     session.view = patchSessionView(session.view, {
@@ -387,7 +387,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     seedFullBlessings(session);
@@ -404,7 +404,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     seedFullBlessings(session);
@@ -420,7 +420,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     session.view = patchSessionView(defaultSessionView(), {
@@ -465,7 +465,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     seedFullBlessings(session);
@@ -494,7 +494,7 @@ describe("handleReadyCheckEvent", () => {
     const session = new GameSession(new RelayTransport(), {
       settings: {
         ...defaultSettings(),
-        autoConfirmReadyCheck: true,
+        autoConfirmPartyHunt: true,
       },
     });
     session.view = patchSessionView(defaultSessionView(), {

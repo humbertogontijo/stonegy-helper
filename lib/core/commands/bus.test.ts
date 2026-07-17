@@ -346,7 +346,7 @@ describe("CommandBus response waiters", () => {
     expect(result.success).toBe(true);
     expect(result.response?.type).toBe(ReceiveMessageTypes.HUNT_BOOTSTRAP);
     expect(records[0]?.expectedResponseType).toBe(
-      "party:action_result | hunt_bootstrap"
+      "party:action_result | hunt_bootstrap | party:snapshot"
     );
     expect(records[0]?.status).toBe("ok");
   });

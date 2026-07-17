@@ -36,9 +36,10 @@ export type SubFeatureId =
   | "hunt.autoHunt"
   | "tasks.autoTasker"
   | "tools.autoTraining"
-  | "tools.readyCheck"
+  | "tools.confirmPartyHunt"
   | "tools.acceptPartyInvite"
-  | "tools.autoBuyBless";
+  | "tools.autoBuyBless"
+  | "tools.autoDisbandSoloParty";
 
 export function isFeatureId(id: ServiceId): id is FeatureId {
   return (

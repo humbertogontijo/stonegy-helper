@@ -105,6 +105,11 @@ export class BattleService extends Service {
     }
   }
 
+  /** Align in-memory selection with settings without writing settings again. */
+  applySelectedHuntId(huntId: number | null): void {
+    this._selectedHuntId = huntId;
+  }
+
   /** Prefer active hunt, then selected, then tasker target. */
   resolveHuntId(): number | null {
     return (

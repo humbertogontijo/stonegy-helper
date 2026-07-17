@@ -4,8 +4,12 @@ import {
   DEFAULT_MARKET_UNDERCUT_GOLD,
 } from "../../../../lib/market/constants";
 import { getItemName, getItemRarityBorderTier, listItems, RARITY_BORDER_TIERS, normalizeRarityBorderTier, shouldNeverAutoSell } from "../../../../lib/items";
-import type { InventoryLootSellEntry } from "../../../../lib/domain/loot-sell";
+import type {
+  InventoryKeepOrMarketEntry,
+  InventoryLootSellEntry,
+} from "../../../../lib/domain/loot-sell";
 import {
+  getInventoryKeepOrMarketEntries,
   getInventoryLootSellEntries,
   sumInventoryLootSellValues,
 } from "../../../../lib/domain/loot-sell";
@@ -344,31 +348,21 @@ function SellOverridesDropdown({
   );
 }
 
-function AutoSellStatusPanel({
-  state,
-  previewSettings,
-}: {
-  state: BotState | null;
-  runAction?: (action: () => Promise<{ ok?: boolean; error?: string; message?: string }>) => Promise<void>;
-  previewSettings: {
-    marketSellMinRarityTier: number;
-    minRaritySellMode: LootSellMode;
-    mountSellMode: LootSellMode;
-    imbuementSellMode: LootSellMode;
-    craftSellMode: LootSellMode;
-    enchantSellMode: LootSellMode;
-    lootSellModeByItemId: Record<number, LootSellMode>;
-  };
-}) {
-  const pricing = useMemo(
-    () => ({
-      taxPercent: state?.settings.marketTaxPercent ?? DEFAULT_MARKET_TAX_PERCENT,
-      undercutGold: state?.settings.marketUndercutGold ?? DEFAULT_MARKET_UNDERCUT_GOLD,
-    }),
-    [state?.settings.marketTaxPercent, state?.settings.marketUndercutGold]
-  );
+type AutoSellPreviewSettings = {
+  marketSellMinRarityTier: number;
+  minRaritySellMode: LootSellMode;
+  mountSellMode: LootSellMode;
+  imbuementSellMode: LootSellMode;
+  craftSellMode: LootSellMode;
+  enchantSellMode: LootSellMode;
+  lootSellModeByItemId: Record<number, LootSellMode>;
+};
 
-  const previewState = useMemo(() => {
+function useAutoSellPreviewState(
+  state: BotState | null,
+  previewSettings: AutoSellPreviewSettings
+) {
+  return useMemo(() => {
     if (!state) {
       return null;
     }
@@ -380,6 +374,191 @@ function AutoSellStatusPanel({
       },
     };
   }, [state, previewSettings]);
+}
+
+function KeepOrMarketStatusPanel({
+  state,
+  runAction,
+  previewSettings,
+}: {
+  state: BotState | null;
+  runAction: (action: () => Promise<{ ok?: boolean; error?: string; message?: string }>) => Promise<void>;
+  previewSettings: AutoSellPreviewSettings;
+}) {
+  const [busyItemId, setBusyItemId] = useState<number | null>(null);
+  const [listedItemIds, setListedItemIds] = useState<Set<number>>(() => new Set());
+  const pricing = useMemo(
+    () => ({
+      taxPercent: state?.settings.marketTaxPercent ?? DEFAULT_MARKET_TAX_PERCENT,
+      undercutGold: state?.settings.marketUndercutGold ?? DEFAULT_MARKET_UNDERCUT_GOLD,
+    }),
+    [state?.settings.marketTaxPercent, state?.settings.marketUndercutGold]
+  );
+  const previewState = useAutoSellPreviewState(state, previewSettings);
+  const rows = useMemo(() => {
+    if (!previewState) {
+      return [];
+    }
+    return getInventoryKeepOrMarketEntries(previewState, pricing).filter(
+      (row) => !listedItemIds.has(row.itemId)
+    );
+  }, [previewState, pricing, listedItemIds]);
+  const connected = !!state?.connection.connected;
+
+  const fetchPrice = (row: InventoryKeepOrMarketEntry) => {
+    setBusyItemId(row.itemId);
+    void (async () => {
+      try {
+        await runAction(() => sendBot("bot:market-sync-item", { itemId: row.itemId }));
+      } finally {
+        setBusyItemId((current) => (current === row.itemId ? null : current));
+      }
+    })();
+  };
+
+  const placeSellOrder = (row: InventoryKeepOrMarketEntry) => {
+    if (row.listPrice == null || row.amount <= 0) {
+      return;
+    }
+    setBusyItemId(row.itemId);
+    void (async () => {
+      try {
+        let listed = false;
+        await runAction(async () => {
+          const result = await sendBot("bot:market-create", {
+            itemId: row.itemId,
+            eachPrice: row.listPrice,
+            itemAmount: row.amount,
+            isBuyOrder: false,
+          });
+          listed = result.ok !== false;
+          return {
+            ...result,
+            message:
+              result.message ??
+              `Listed ${row.name} ×${row.amount} @ ${row.listPrice!.toLocaleString()} gp`,
+          };
+        });
+        if (listed) {
+          setListedItemIds((current) => {
+            const next = new Set(current);
+            next.add(row.itemId);
+            return next;
+          });
+        }
+      } finally {
+        setBusyItemId((current) => (current === row.itemId ? null : current));
+      }
+    })();
+  };
+
+  return (
+    <StonegyPanel title="Keep / market items">
+      <LootItemsTable<InventoryKeepOrMarketEntry>
+        rows={rows}
+        rowKey={(row) => row.itemId}
+        rowClassName={(row) => rarityRowClass(row.itemId)}
+        emptyMessage="No keep or market items in inventory."
+        summary={rows.length ? `${rows.length} filtered from auto loot` : undefined}
+        note={
+          <p className="m-0 text-[10px] text-[var(--text-muted)]">
+            Fetch price, then list at lowest −{pricing.undercutGold} gp.
+          </p>
+        }
+        columns={[
+          {
+            id: "item",
+            header: "Item",
+            className: "max-w-[7.5rem] min-w-0 pr-1 text-left",
+            cell: (row) => (
+              <div className="max-w-[7.5rem] truncate">
+                <LootItemName name={row.name} amount={row.amount} />
+              </div>
+            ),
+          },
+          {
+            id: "price",
+            header: "Price",
+            className: "w-12 whitespace-nowrap pr-1 text-right tabular-nums",
+            cell: (row) =>
+              row.listPrice != null ? (
+                <span title={row.lowestSellPrice != null ? `Lowest ${row.lowestSellPrice}` : undefined}>
+                  {formatCompactGold(row.listPrice)}
+                </span>
+              ) : !row.needsMarketSync ? (
+                <span className="text-[var(--text-muted)]" title="No market listings">
+                  none
+                </span>
+              ) : (
+                <span className="text-[var(--text-muted)]">—</span>
+              ),
+          },
+          {
+            id: "actions",
+            header: "",
+            className: "w-14 whitespace-nowrap py-0.5 text-right",
+            cell: (row) => {
+              const busy = busyItemId === row.itemId;
+              const canList = row.listPrice != null;
+              return (
+                <div className="flex items-center justify-end gap-0.5">
+                  <RefreshIconButton
+                    label={`Fetch market price for ${row.name}`}
+                    disabled={!connected || busy}
+                    onClick={() => fetchPrice(row)}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-[var(--border-gold-soft)] bg-[rgba(28,36,39,0.55)] text-[var(--text-muted)] transition-colors hover:border-[var(--border-gold)] hover:text-[var(--gold-soft)] disabled:pointer-events-none disabled:opacity-40"
+                    disabled={!connected || busy || !canList}
+                    aria-label={
+                      canList
+                        ? `List ${row.name} on market at ${row.listPrice!.toLocaleString()} gp`
+                        : row.needsMarketSync
+                          ? `Fetch price before listing ${row.name}`
+                          : `No market listings for ${row.name}`
+                    }
+                    title={
+                      canList
+                        ? `List @ ${row.listPrice!.toLocaleString()} gp`
+                        : row.needsMarketSync
+                          ? "Fetch price first"
+                          : "No market listings"
+                    }
+                    onClick={() => placeSellOrder(row)}
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2zM7.16 14.26l.03-.12L8.1 12h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49A1 1 0 0 0 20 3H5.21L4.27 1H1v2h2l3.6 7.59-1.35 2.44C4.52 14.37 5.48 16 7 16h12v-2H7.42c-.14 0-.25-.11-.26-.24z" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            },
+          },
+        ]}
+      />
+    </StonegyPanel>
+  );
+}
+
+function AutoSellStatusPanel({
+  state,
+  runAction,
+  previewSettings,
+}: {
+  state: BotState | null;
+  runAction: (action: () => Promise<{ ok?: boolean; error?: string; message?: string }>) => Promise<void>;
+  previewSettings: AutoSellPreviewSettings;
+}) {
+  const pricing = useMemo(
+    () => ({
+      taxPercent: state?.settings.marketTaxPercent ?? DEFAULT_MARKET_TAX_PERCENT,
+      undercutGold: state?.settings.marketUndercutGold ?? DEFAULT_MARKET_UNDERCUT_GOLD,
+    }),
+    [state?.settings.marketTaxPercent, state?.settings.marketUndercutGold]
+  );
+
+  const previewState = useAutoSellPreviewState(state, previewSettings);
 
   const sellRows = useMemo(() => {
     if (!previewState) {
@@ -416,53 +595,60 @@ function AutoSellStatusPanel({
   }, [state?.connection.connected, syncItemIds]);
 
   return (
-    <StonegyPanel title="Auto sell preview">
-      <LootItemsTable<InventoryLootSellEntry>
-        rows={sellRows}
-        rowKey={(row) => row.itemId}
-        rowClassName={(row) => rarityRowClass(row.itemId)}
-        emptyMessage="No sellable inventory items."
-        summary={sellRows.length ? `${sellRows.length} item type(s)` : undefined}
-        note={
-          heldCount ? (
-            <p className="m-0 text-[10px] text-[var(--gold-soft)]">
-              {heldCount} item(s) held — market rule matched but no price reference
-              {sellRows.some((row) => row.venue === "none" && row.needsMarketSync)
-                ? ". Syncing market prices…"
-                : " (empty book). Kept, not sold to NPC."}
-            </p>
-          ) : null
-        }
-        columns={[
-          {
-            id: "item",
-            header: "Item",
-            className: "min-w-0 w-auto pr-2 text-left",
-            cell: (row) => (
-              <LootItemName
-                name={row.name}
-                amount={row.amount}
-              />
-            ),
-            footer: "Total",
-          },
-          {
-            id: "final",
-            header: "Value",
-            className: "w-16 whitespace-nowrap text-right tabular-nums",
-            cell: (row) =>
-              row.venue === "none" ? (
-                <span className="text-[var(--gold-soft)]">hold</span>
-              ) : row.finalValue == null ? (
-                <span className="text-[var(--text-muted)]">—</span>
-              ) : (
-                formatCompactGold(row.finalValue)
+    <div className="flex min-h-0 flex-col gap-2">
+      <StonegyPanel title="Auto sell preview">
+        <LootItemsTable<InventoryLootSellEntry>
+          rows={sellRows}
+          rowKey={(row) => row.itemId}
+          rowClassName={(row) => rarityRowClass(row.itemId)}
+          emptyMessage="No sellable inventory items."
+          summary={sellRows.length ? `${sellRows.length} item type(s)` : undefined}
+          note={
+            heldCount ? (
+              <p className="m-0 text-[10px] text-[var(--gold-soft)]">
+                {heldCount} item(s) held — market rule matched but no price reference
+                {sellRows.some((row) => row.venue === "none" && row.needsMarketSync)
+                  ? ". Syncing market prices…"
+                  : " (empty book). Kept, not sold to NPC."}
+              </p>
+            ) : null
+          }
+          columns={[
+            {
+              id: "item",
+              header: "Item",
+              className: "min-w-0 w-auto pr-2 text-left",
+              cell: (row) => (
+                <LootItemName
+                  name={row.name}
+                  amount={row.amount}
+                />
               ),
-            footer: formatGold(totals.finalValue),
-          },
-        ]}
+              footer: "Total",
+            },
+            {
+              id: "final",
+              header: "Value",
+              className: "w-16 whitespace-nowrap text-right tabular-nums",
+              cell: (row) =>
+                row.venue === "none" ? (
+                  <span className="text-[var(--gold-soft)]">hold</span>
+                ) : row.finalValue == null ? (
+                  <span className="text-[var(--text-muted)]">—</span>
+                ) : (
+                  formatCompactGold(row.finalValue)
+                ),
+              footer: formatGold(totals.finalValue),
+            },
+          ]}
+        />
+      </StonegyPanel>
+      <KeepOrMarketStatusPanel
+        state={state}
+        runAction={runAction}
+        previewSettings={previewSettings}
       />
-    </StonegyPanel>
+    </div>
   );
 }
 

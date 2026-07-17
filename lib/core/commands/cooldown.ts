@@ -30,9 +30,10 @@ export const FEATURE_COOLDOWNS = {
   "hunt.autoHunt": SHORT_COOLDOWN,
   "tasks.autoTasker": SHORT_COOLDOWN,
   "tools.autoTraining": REGULAR_COOLDOWN,
-  "tools.readyCheck": SHORT_COOLDOWN,
+  "tools.confirmPartyHunt": SHORT_COOLDOWN,
   "tools.acceptPartyInvite": SHORT_COOLDOWN,
   "tools.autoBuyBless": SHORT_COOLDOWN,
+  "tools.autoDisbandSoloParty": SHORT_COOLDOWN,
 } as const satisfies Record<SubFeatureId, number>;
 
 /**
@@ -74,13 +75,13 @@ export const COMMAND_COOLDOWNS: Readonly<Record<string, number>> = {
   // Hunt
   start_hunt: FEATURE_COOLDOWNS["hunt.autoHunt"],
   leave_hunt: REGULAR_COOLDOWN,
-  party_disband: SHORT_COOLDOWN,
+  party_disband: FEATURE_COOLDOWNS["tools.autoDisbandSoloParty"],
   // Tasks
   quest_start_monster_task: FEATURE_COOLDOWNS["tasks.autoTasker"],
   quest_deliver_monster_task: FEATURE_COOLDOWNS["tasks.autoTasker"],
   quest_claim_reward: FEATURE_COOLDOWNS["tasks.autoTasker"],
   // Tools
-  party_ready_check_confirm: FEATURE_COOLDOWNS["tools.readyCheck"],
+  party_ready_check_confirm: FEATURE_COOLDOWNS["tools.confirmPartyHunt"],
   party_accept_invite: FEATURE_COOLDOWNS["tools.acceptPartyInvite"],
   bless_buy: FEATURE_COOLDOWNS["tools.autoBuyBless"],
   bless_get_snapshot: FEATURE_COOLDOWNS["tools.autoBuyBless"],

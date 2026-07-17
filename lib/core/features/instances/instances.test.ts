@@ -13,8 +13,9 @@ const ALL_SUB_FEATURE_IDS: SubFeatureId[] = [
   "hunt.autoHunt",
   "tasks.autoTasker",
   "tools.autoTraining",
-  "tools.readyCheck",
+  "tools.confirmPartyHunt",
   "tools.autoBuyBless",
+  "tools.autoDisbandSoloParty",
   "tools.acceptPartyInvite",
 ];
 

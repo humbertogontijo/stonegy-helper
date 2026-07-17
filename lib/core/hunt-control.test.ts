@@ -8,13 +8,14 @@ import { SendMessageTypes } from "../protocol";
 import type { Transport } from "./transport";
 import { HuntService } from "./services/hunt.service";
 import { TasksService } from "./services/tasks.service";
+import { BattleService } from "./services/battle.service";
 
 vi.mock("./readiness", () => ({
   waitForPartySnapshot: vi.fn().mockResolvedValue(undefined),
   waitForBlessSnapshot: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { waitForPartySnapshot } from "./readiness";
+import { waitForPartySnapshot, waitForBlessSnapshot } from "./readiness";
 
 class MockTransport implements Transport {
   async connect(): Promise<void> {}
@@ -139,6 +140,101 @@ describe("hunt-control", () => {
       },
       expect.anything()
     );
+  });
+
+  it("leaves training and starts hunt when selecting a startable hunt with auto hunt on", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.updateSettings({ autoHuntEnabled: true, selectedHuntId: null });
+    session.updateView({
+      playerState: "training",
+      party: { ...session.view.party, partyStatus: "training" },
+      training: { activeTrainingId: "train-1" },
+    });
+
+    const runSpy = vi.spyOn(session.commands, "run").mockImplementation(async (type) => {
+      if (type === SendMessageTypes.FINISH_TRAINING) {
+        session.updateView({
+          playerState: "idling",
+          party: { ...session.view.party, partyStatus: "idle" },
+          training: { activeTrainingId: null },
+        });
+      }
+      if (type === SendMessageTypes.START_HUNT) {
+        session.updateView({
+          playerState: "hunting",
+          party: { ...session.view.party, partyStatus: "hunting" },
+          hunt: { ...session.view.hunt, activeHuntId: 57 },
+        });
+      }
+      return { sent: true, success: true };
+    });
+
+    session.updateSettings({ selectedHuntId: 57 });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.FINISH_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.objectContaining({ huntId: 57 }),
+      expect.any(Object)
+    );
+    expect(session.services.get<BattleService>("battle").selectedHuntId).toBe(57);
+
+    vi.useRealTimers();
+  });
+
+  it("auto-restarts after reload even when blessings are not synced yet", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.updateView({
+      bless: {
+        ...session.view.bless,
+        blessSnapshotSynced: false,
+        ownedCount: null,
+        blessings: [],
+        lastSnapshotAt: null,
+      },
+    });
+
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+    vi.mocked(waitForBlessSnapshot).mockImplementation(async () => {
+      session.updateView({
+        bless: {
+          ...session.view.bless,
+          blessSnapshotSynced: true,
+          ownedCount: 7,
+          lastSnapshotAt: Date.now(),
+        },
+      });
+    });
+
+    // Avoid updateSettings side-effects until mocks are ready.
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      selectedHuntId: 57,
+    };
+    session.services.get<BattleService>("battle").applySelectedHuntId(57);
+
+    const startPromise = session.services.get<HuntService>("hunt").tryStartFromSelectionChange();
+    await vi.runAllTimersAsync();
+    await startPromise;
+
+    expect(waitForBlessSnapshot).toHaveBeenCalled();
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.objectContaining({ huntId: 57 }),
+      expect.any(Object)
+    );
+
+    vi.useRealTimers();
   });
 
   it("rejects auto hunt when not party leader", async () => {

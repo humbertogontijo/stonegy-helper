@@ -9,6 +9,7 @@ import { DEFAULT_MARKET_TAX_PERCENT } from "../market/constants";
 import {
   getCombinedLootSellExcludedItemIds,
   getGameQuickSellDeselectedItemIds,
+  getInventoryKeepOrMarketEntries,
   getInventoryLootSellEntries,
   getInventoryItemsToSellOnHuntFinish,
   hasInventoryLootCandidates,
@@ -216,6 +217,49 @@ describe("inventory loot sell", () => {
       netValue: 240,
       finalValue: 6,
     });
+  });
+
+  it("lists keep and market inventory items for manual market actions", () => {
+    const state = stateWithInventory(
+      {
+        14: 2, // rarity → market
+        246: 1, // mount → keep
+        731: 3, // junk → npc (omit)
+        100: 1, // never-sell → keep
+      },
+      {
+        mountSellMode: "keep",
+        minRaritySellMode: "market",
+        marketSellMinRarityTier: 1,
+      }
+    );
+
+    expect(getInventoryKeepOrMarketEntries(state, pricing)).toEqual([
+      expect.objectContaining({
+        itemId: 246,
+        amount: 1,
+        rule: "keep",
+        needsMarketSync: true,
+      }),
+      expect.objectContaining({
+        itemId: 100,
+        amount: 1,
+        rule: "keep",
+        needsMarketSync: true,
+        listPrice: null,
+      }),
+      expect.objectContaining({
+        itemId: 14,
+        amount: 2,
+        rule: "market",
+        lowestSellPrice: 400,
+        listPrice: 399,
+        needsMarketSync: false,
+      }),
+    ]);
+    expect(
+      getInventoryKeepOrMarketEntries(state, pricing).map((entry) => entry.itemId)
+    ).not.toContain(731);
   });
 
   it("uses sellable amounts so partial charge/timing items are omitted from preview", () => {

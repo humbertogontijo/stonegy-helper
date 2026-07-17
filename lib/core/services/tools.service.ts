@@ -1,4 +1,6 @@
 import { hasAllBlessings, nextAffordableBlessing } from "../../domain/bless";
+import { isAutoHuntRestartEnabled } from "../../domain/hunt/guards";
+import { isStartableHuntId } from "../../hunts";
 import { featureCooldown, LONG_COOLDOWN, BURST_COOLDOWN, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity, readPartyMemberCount } from "../humanize";
 import { SendMessageTypes, ReceiveMessageTypes } from "../../protocol";
@@ -26,6 +28,7 @@ import type { TrainingState } from "./states/training.state";
 import type { PartyState } from "./states/party.state";
 import type { SessionState } from "./states/session.state";
 import type { BlessState } from "./states/bless.state";
+import type { BattleService } from "./battle.service";
 import type { HuntService } from "./hunt.service";
 
 export const DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC = 5;
@@ -36,6 +39,7 @@ export type ToolsFlowPhase =
   | "confirming_ready"
   | "buying_bless"
   | "accepting_invite"
+  | "disbanding_party"
   | "waiting_idle"
   | "starting_training"
   | "training_active"
@@ -79,6 +83,8 @@ export class ToolsService extends Service {
   private confirmedReadyCheckIds: string[] = [];
   private acceptedPartyInviteIds: string[] = [];
   private autoTrainingTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True after we've seen 2+ members; used so creating a solo party to invite isn't disbanded. */
+  private hadMultiplePartyMembers = false;
 
   /**
    * Ready-check id waiting on blessings (sync / auto-buy / manual buy).
@@ -154,7 +160,22 @@ export class ToolsService extends Service {
     }
   }
 
+  start(): void {
+    this.syncAutoTrainingFromSettings();
+  }
+
   stop(): void {
+    this.cancelAutoTrainingCheck();
+  }
+
+  /** Schedule or cancel the idle timer when auto-training is toggled. */
+  syncAutoTrainingFromSettings(): void {
+    if (this.ctx.settings.get().autoTrainingEnabled) {
+      this.scheduleAutoTrainingCheck(this.resolveAutoTrainingIdleDelayMs(), {
+        restart: true,
+      });
+      return;
+    }
     this.cancelAutoTrainingCheck();
   }
 
@@ -199,13 +220,32 @@ export class ToolsService extends Service {
 
     if (
       isJsonEvent(event, ReceiveMessageTypes.PARTY_SNAPSHOT) &&
-      this.shouldAutoConfirmReadyCheck()
+      this.shouldAutoConfirmPartyHunt()
     ) {
       await this.handleReadyCheck(event);
     }
 
     if (settings.autoAcceptPartyInvite && isJsonEvent(event, ReceiveMessageTypes.PARTY_SNAPSHOT)) {
       await this.handleAcceptPartyInvite(event);
+    }
+
+    if (settings.autoDisbandSoloParty) {
+      if (isJsonEvent(event, ReceiveMessageTypes.PARTY_SNAPSHOT)) {
+        const data = event.message.data as PartySnapshotPayload | undefined;
+        this.notePartyMemberCount(readPartyMemberCount(data?.party));
+        await this.handleDisbandPartyWhenAlone({
+          memberCount: readPartyMemberCount(data?.party),
+          status: typeof data?.party?.status === "string" ? data.party.status : null,
+        });
+      } else if (
+        isJsonEvent(event, ReceiveMessageTypes.HUNT_FINISHED) ||
+        isJsonEvent(event, ReceiveMessageTypes.TRAINING_FINISHED)
+      ) {
+        await this.handleDisbandPartyWhenAlone({
+          memberCount: this.partyState.partyMemberCount,
+          status: this.partyState.partyStatus,
+        });
+      }
     }
 
     if (settings.autoTrainingEnabled && AUTO_TRAINING_IDLE_EVENTS.has(event.message.type)) {
@@ -221,7 +261,7 @@ export class ToolsService extends Service {
    */
   async tryFulfillPendingReadyCheck(): Promise<void> {
     const readyCheckId = this.pendingReadyCheckId;
-    if (!readyCheckId || !this.shouldAutoConfirmReadyCheck()) {
+    if (!readyCheckId || !this.shouldAutoConfirmPartyHunt()) {
       return;
     }
     if (this.confirmedReadyCheckIds.includes(readyCheckId)) {
@@ -356,8 +396,8 @@ export class ToolsService extends Service {
    * Confirm ready-checks when the Tools toggle is on, or when Hunt is mid start/restart
    * (so auto-hunt is not blocked by a party ready-check with the Tools toggle off).
    */
-  private shouldAutoConfirmReadyCheck(): boolean {
-    if (this.ctx.settings.get().autoConfirmReadyCheck) {
+  private shouldAutoConfirmPartyHunt(): boolean {
+    if (this.ctx.settings.get().autoConfirmPartyHunt) {
       return true;
     }
     const hunt = this.ctx.session.services.tryGet<HuntService>("hunt");
@@ -366,7 +406,7 @@ export class ToolsService extends Service {
 
   /** Unresolved ready-check the helper should eventually confirm (blessings may still be missing). */
   private unresolvedReadyCheckId(data: PartySnapshotPayload | undefined): string | null {
-    if (!this.shouldAutoConfirmReadyCheck()) {
+    if (!this.shouldAutoConfirmPartyHunt()) {
       return null;
     }
 
@@ -414,7 +454,7 @@ export class ToolsService extends Service {
           const outcome = await this.ctx.session.commands.run(
             SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
             { readyCheckId },
-            { cooldownMs: featureCooldown("tools.readyCheck") }
+            { cooldownMs: featureCooldown("tools.confirmPartyHunt") }
           );
           confirmTrace.command({
             type: SendMessageTypes.PARTY_READY_CHECK_CONFIRM,
@@ -470,6 +510,39 @@ export class ToolsService extends Service {
     return this.findPendingPartyInvite(data) != null;
   }
 
+  /** Track multi-member parties so we only auto-disband after others leave (not on create). */
+  private notePartyMemberCount(memberCount: number | null): void {
+    if (memberCount == null || memberCount <= 0) {
+      this.hadMultiplePartyMembers = false;
+      return;
+    }
+    if (memberCount >= 2) {
+      this.hadMultiplePartyMembers = true;
+    }
+  }
+
+  private shouldDisbandPartyWhenAlone(options: {
+    memberCount: number | null;
+    status: string | null | undefined;
+  }): boolean {
+    if (!this.ctx.settings.get().autoDisbandSoloParty) {
+      return false;
+    }
+    if (options.memberCount !== 1 || !this.hadMultiplePartyMembers) {
+      return false;
+    }
+    if (!isPartyLeader(this.identity())) {
+      return false;
+    }
+    if (options.status === "hunting" || options.status === "training") {
+      return false;
+    }
+    if (isInActiveHunt(this.ctx.session) || isInActiveTraining(this.ctx.session)) {
+      return false;
+    }
+    return true;
+  }
+
   private async finishTrainingIfActive(): Promise<{ finished: boolean; error?: string }> {
     if (!isInActiveTraining(this.ctx.session)) {
       return { finished: false };
@@ -498,9 +571,16 @@ export class ToolsService extends Service {
     if (this.partyState.partyStatus === "training") {
       this.partyState.setPartyStatus("idle");
     }
+    this.cancelAutoTrainingCheck();
+    this.setFlowPhase("idle", { startedAt: null, lastError: null });
     updatePlayerState(this.ctx.session, "idling", "Left training");
 
     return { finished: true };
+  }
+
+  /** Leave training when hunt (or another feature) needs the character idle. */
+  async leaveTrainingIfActive(): Promise<{ finished: boolean; error?: string }> {
+    return this.finishTrainingIfActive();
   }
 
   private async leaveActivityBeforePartyAction(options: {
@@ -653,6 +733,58 @@ export class ToolsService extends Service {
     });
   }
 
+  private async handleDisbandPartyWhenAlone(options: {
+    memberCount: number | null;
+    status: string | null | undefined;
+  }): Promise<void> {
+    await this.traceFlow("disband-when-alone", async (trace) => {
+      const shouldDisband = this.shouldDisbandPartyWhenAlone(options);
+      trace.guard("should_disband", shouldDisband);
+      if (!shouldDisband) {
+        trace.finish("skipped");
+        return;
+      }
+
+      await this.run("party", async () => {
+        const current = {
+          memberCount: this.partyState.partyMemberCount,
+          status: this.partyState.partyStatus,
+        };
+        if (!this.shouldDisbandPartyWhenAlone(current)) {
+          trace.finish("skipped");
+          return;
+        }
+
+        this.setFlowPhase("disbanding_party", { startedAt: Date.now(), lastError: null });
+        trace.setPhase("disbanding_party");
+
+        const outcome = await this.ctx.session.commands.run(
+          SendMessageTypes.PARTY_DISBAND,
+          {},
+          { cooldownMs: featureCooldown("tools.autoDisbandSoloParty") }
+        );
+        trace.command({
+          type: SendMessageTypes.PARTY_DISBAND,
+          success: outcome.success !== false,
+          error: outcome.success === false ? outcome.errorMessage : undefined,
+        });
+
+        if (outcome.success === false) {
+          this.setFlowPhase("failed", {
+            lastError: outcome.errorMessage ?? "Disband party failed",
+          });
+          this.setFlowPhase("idle", { startedAt: null });
+          trace.finish("failed", { error: outcome.errorMessage });
+          return;
+        }
+
+        this.hadMultiplePartyMembers = false;
+        this.setFlowPhase("idle", { startedAt: null, lastError: null });
+        trace.finish("ok");
+      });
+    });
+  }
+
   private async handleAutoTraining(event: GameEvent): Promise<void> {
     if (event.kind !== "json" || !this.ctx.settings.get().autoTrainingEnabled) {
       this.cancelAutoTrainingCheck();
@@ -687,14 +819,33 @@ export class ToolsService extends Service {
           return;
         }
 
-        if (this.hasActionablePartyInvite(data) || this.unresolvedReadyCheckId(data) != null) {
-          this.scheduleAutoTrainingCheck(LONG_COOLDOWN);
+        if (
+          this.hasActionablePartyInvite(data) ||
+          this.unresolvedReadyCheckId(data) != null ||
+          this.shouldDisbandPartyWhenAlone({
+            memberCount: readPartyMemberCount(data?.party),
+            status: typeof data?.party?.status === "string" ? data.party.status : null,
+          })
+        ) {
+          // Party work pending — push the idle timer out.
+          this.scheduleAutoTrainingCheck(LONG_COOLDOWN, { restart: true });
           trace.finish("skipped", { result: "defer_for_party_action" });
           return;
         }
+
+        // Snapshots stream continuously (esp. on reload). Keep the existing idle
+        // countdown instead of resetting it on every party_snapshot.
+        this.scheduleAutoTrainingCheck(this.resolveAutoTrainingIdleDelayMs(), {
+          restart: false,
+        });
+        trace.finish("ok", { result: "ensure_idle_timer" });
+        return;
       }
 
-      this.scheduleAutoTrainingCheck();
+      // Hunt/training finished (or idle training bootstrap) — start a fresh idle wait.
+      this.scheduleAutoTrainingCheck(this.resolveAutoTrainingIdleDelayMs(), {
+        restart: true,
+      });
     });
   }
 
@@ -714,9 +865,21 @@ export class ToolsService extends Service {
     }
   }
 
-  scheduleAutoTrainingCheck(delayMs = this.resolveAutoTrainingIdleDelayMs()): void {
+  /**
+   * @param restart When false, leave an already-pending idle timer alone so
+   *   frequent party snapshots cannot starve auto-training.
+   */
+  scheduleAutoTrainingCheck(
+    delayMs = this.resolveAutoTrainingIdleDelayMs(),
+    options: { restart?: boolean } = {}
+  ): void {
     if (!this.ctx.settings.get().autoTrainingEnabled) {
       this.cancelAutoTrainingCheck();
+      return;
+    }
+
+    const restart = options.restart !== false;
+    if (!restart && this.autoTrainingTimer != null) {
       return;
     }
 
@@ -728,6 +891,23 @@ export class ToolsService extends Service {
     }, delayMs);
   }
 
+  /**
+   * True when auto-hunt will actually claim idle time (startable hunt + leader).
+   * Boss/quest selector ids are not startable — don't starve auto-training for them.
+   */
+  private willAutoHuntClaimIdle(): boolean {
+    const session = this.ctx.session;
+    const settings = session.settings;
+    if (!isAutoHuntRestartEnabled(settings) || !isPartyLeader(this.identity())) {
+      return false;
+    }
+
+    const selectedHuntId =
+      session.services.tryGet<BattleService>("battle")?.selectedHuntId ??
+      settings.selectedHuntId;
+    return selectedHuntId != null && isStartableHuntId(selectedHuntId);
+  }
+
   private hasPendingPostHuntWork(): boolean {
     const session = this.ctx.session;
 
@@ -735,11 +915,7 @@ export class ToolsService extends Service {
       return true;
     }
 
-    if (
-      session.settings.autoHuntEnabled &&
-      !session.settings.autoTaskerEnabled &&
-      isPartyLeader(this.identity())
-    ) {
+    if (this.willAutoHuntClaimIdle()) {
       return true;
     }
 

@@ -23,6 +23,7 @@ export function defaultSessionView(): SessionView {
       partyMemberCount: null,
       partySnapshotSynced: false,
       lastSnapshotAt: null,
+      readyCheckId: null,
       partyLootSplitter: null,
       lootSplitCompletedByPlayerId: {},
       lootSplitProgressFingerprint: null,

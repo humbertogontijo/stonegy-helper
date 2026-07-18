@@ -32,8 +32,9 @@ describe("BinaryReader safe integers", () => {
     expect(() => reader.i64Safe()).toThrow(/safe integer/);
   });
 
-  it("rejects negative skip counts", () => {
+  it("rejects skip — unmapped bytes must fail the decode", () => {
     const reader = new BinaryReader(new Uint8Array(4));
-    expect(() => reader.skip(-1)).toThrow(/negative/);
+    expect(() => reader.skip(1)).toThrow(/not allowed/);
+    expect(() => reader.skip(-1)).toThrow(/not allowed/);
   });
 });

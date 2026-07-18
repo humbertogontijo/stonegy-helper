@@ -9,6 +9,7 @@ import {
   DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC,
   ToolsService,
 } from "./tools.service";
+import type { LootService } from "./loot.service";
 
 function createMockTransport(): Transport {
   return {
@@ -211,6 +212,56 @@ describe("auto training", () => {
     session.services.setPlayerState("splitting_loot");
 
     expect(tools(session).canAutoTrain()).toBe(false);
+  });
+
+  it("does not start while loot flow is busy even if playerState is idling", async () => {
+    const session = createSession({ autoSellLoot: true });
+    session.services.setPlayerState("idling");
+    session.services.get<LootService>("loot").applyPendingHuntLootPatch({
+      pendingHuntLootSell: true,
+    });
+
+    expect(tools(session).canAutoTrain()).toBe(false);
+
+    tools(session).scheduleAutoTrainingCheck();
+    await vi.advanceTimersByTimeAsync(DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC * 1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).not.toHaveBeenCalled();
+  });
+
+  it("defers idle training on hunt finish when auto-sell owns the finish", async () => {
+    const session = createSession({
+      autoSellLoot: true,
+      autoTrainingIdleDelaySec: 1,
+    });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    await tools(session).onEvent({
+      kind: "json",
+      direction: "receive",
+      message: { type: ReceiveMessageTypes.HUNT_FINISHED, data: { reason: "completed" } },
+      raw: "",
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+    expect(session.commands.run).not.toHaveBeenCalled();
+
+    await tools(session).onEvent({ kind: "loot_pipeline_finished" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
   });
 
   it("does not start while tasker is active", async () => {

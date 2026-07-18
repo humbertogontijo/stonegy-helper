@@ -21,11 +21,13 @@ export enum StonegyBinaryMessageType {
   Ping = 0x11,
   /** Named ability cast — same payload layout as AutoAttack. */
   AbilityCast = 0x12,
-  PlayerUpdate = 0x14,
+  /** Xp record batch on hunt bootstrap/reconnect (formerly "PlayerUpdate"). */
+  XpSummary = 0x14,
   XpGain = 0x15,
   SessionMetric = 0x16,
   Speech = 0x17,
-  StatusEffect = 0x18,
+  /** Batched effect/AoE area records (formerly misread as "StatusEffect"). */
+  EffectArea = 0x18,
   AutoAttack = 0x19,
   GroundItemUpdate = 0x1a,
   /** Visual/outfit sync frames observed during city and outfit flows. */
@@ -82,10 +84,17 @@ export interface InventoryDepotSection {
   items: InventoryItemEntry[];
 }
 
-export interface SpeechBody {
-  channel: number;
+/** One utterance on a type 0x17 frame (frames batch multiple speakers). */
+export interface SpeechEntry {
+  /** Observed constant 2 — likely the speech mode (spell yell). */
   mode: number;
+  /** Runtime party-member index (matches xp share memberIndex values). */
+  speakerIndex: number;
   text: string;
+}
+
+export interface SpeechBody {
+  entries: SpeechEntry[];
 }
 
 export interface SpellCastBody {
@@ -105,24 +114,83 @@ export interface AutoAttackBody {
   combatHits: AbilityCombatHit[];
 }
 
-export interface SupportAbilityCastEffectTail {
+/**
+ * Status effect attached to a support-cast entry (observed: Burning DoT on
+ * Utamo Tempo refresh frames). Wire layout: uuid string + element/name/icon
+ * strings + 4 × u32.
+ */
+export interface SupportAbilityStatusEffect {
+  /** UUIDv7 identifying the status-effect instance. */
+  uuid: string;
+  /** Damage school code (observed "FIRE"). */
+  element: string;
+  /** Display name (observed "Burning"). */
+  name: string;
+  /** Icon asset path (observed "/assets/icons/Burning_Icon.gif"). */
+  iconPath: string;
+  /** Total effect duration in ms (observed 312000). */
+  totalDurationMs: number;
+  /** Unknown u32 between duration and amount (observed 1). */
   fieldA: number;
-  fieldB: number;
-  fieldC: number;
-  byteD: number;
-  byteE: number;
+  /** Per-tick amount (observed 25 for Burning). */
+  amount: number;
+  /** Tick interval in ms (observed 4000). */
+  tickIntervalMs: number;
+}
+
+export interface SupportAbilityCastEffectTail {
+  /** Milliseconds remaining on the buff when the frame was sent. */
+  remainingMs: number;
+  /**
+   * Optional u8 present when entry header.byteA has bits 0x02/0x04 set
+   * (observed: Magic Shield strength = 100; byteA ∈ {0x03, 0x04}).
+   */
+  extra?: number;
+  /** Status effects attached to the entry (e.g. Burning while the buff refreshes). */
+  statusEffects?: SupportAbilityStatusEffect[];
+  /** Trailing flag byte before duration (observed 0 or 1). */
+  flag: number;
+  durationMs: number;
+  values: number[];
+}
+
+export interface SupportAbilityCastEntry {
+  header: {
+    byteA: number;
+    byteB: number;
+    byteC: number;
+  };
+  /**
+   * Typically [spellCode, displayName, iconGif]. Empty for headerless
+   * continuation entries (header.byteB === 0), which carry only the tail.
+   */
+  strings: string[];
+  /** 0 for continuation entries (no remainingMs on the wire). */
+  remainingMs: number;
+  extra?: number;
+  /** Status effects attached to this entry (e.g. Burning DoT). */
+  statusEffects?: SupportAbilityStatusEffect[];
+  flag: number;
   durationMs: number;
   values: number[];
 }
 
 export interface SupportAbilityCastBody {
+  /** One or more active support buffs in this frame. */
+  entries: SupportAbilityCastEntry[];
+  /**
+   * Compat mirror of `entries[0].header` with `byteD: 0`.
+   * Legacy captures treated `entryCount + header` as a fixed 4-byte header.
+   */
   header: {
     byteA: number;
     byteB: number;
     byteC: number;
     byteD: number;
   };
+  /** Flattened strings across all entries. */
   strings: string[];
+  /** Compat mirror of the first entry's effect fields. */
   effectTail?: SupportAbilityCastEffectTail;
   rawTail: Uint8Array;
 }
@@ -153,22 +221,53 @@ export interface HuntWorldSnapshotBody {
   tail: Uint8Array;
 }
 
-export interface EntityMoveBody {
-  entityIndex: number;
+/** One outfit color slot (0x01 marker + RGB). Slots map to head/body/legs/feet. */
+export interface EntityAppearanceColor {
+  marker: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Appearance/outfit block on moveKind=1 entity_move records — identical to the
+ * tail of a type-0x1f world-snapshot entity block.
+ */
+export interface EntityAppearance {
+  level: number;
+  fieldA: number;
+  fieldB: number;
+  looktype: number;
+  flag: number;
+  value: number;
+  reserved: number;
+  colors: EntityAppearanceColor[];
+}
+
+export interface EntityMoveRecord {
   moveKind: number;
   name: string;
   delta: number;
   reserved: number;
   state: number;
+  /** Present when moveKind=1 (entity appearing in view). */
+  appearance?: EntityAppearance;
 }
 
-export interface EntityPositionBody {
-  entityIndex: number;
+export interface EntityMoveBody {
+  records: EntityMoveRecord[];
+}
+
+export interface EntityPositionRecord {
   name: string;
   delta: number;
   fieldA: number;
   fieldB: number;
   state: number;
+}
+
+export interface EntityPositionBody {
+  records: EntityPositionRecord[];
 }
 
 export interface MapBootstrapEntry {
@@ -194,6 +293,7 @@ import type {
   CombatFloatBody,
   CounterTripletBody,
   CooldownUpdateBody,
+  EffectAreaBody,
   GroundItemUpdateBody,
   HuntEntitySpawnBody,
   HuntAnalyzerSnapshotBody,
@@ -201,12 +301,11 @@ import type {
   MonsterLootBody,
   ItemGrantBody,
   KillEventBody,
-  PlayerVitalsBody,
   SessionMetricBody,
   GoldBalanceBody,
-  StatusEffectBody,
   VitalsBody,
   XpGainBody,
+  XpSummaryBody,
 } from "../protocol-messages.ts";
 
 export interface UnknownBinaryBody {
@@ -235,6 +334,8 @@ export interface MarketSnapshotBody {
   buyOrders: BinaryMarketOrder[];
   sellOrderAnchors: number[];
   buyOrderAnchors: number[];
+  /** Unmapped footer bytes; presence means the frame is incomplete. */
+  trailingBytes?: Uint8Array;
 }
 
 export type DecodedBinaryBody =
@@ -252,12 +353,12 @@ export type DecodedBinaryBody =
   | { kind: "gold_balance"; data: GoldBalanceBody }
   | { kind: "inventory_snapshot"; data: InventorySnapshotBody }
   | { kind: "market_snapshot"; data: MarketSnapshotBody }
-  | { kind: "player_update"; data: PlayerVitalsBody }
+  | { kind: "xp_summary"; data: XpSummaryBody }
   | { kind: "xp_gain"; data: XpGainBody }
   | { kind: "session_metric"; data: SessionMetricBody }
   | { kind: "speech"; data: SpeechBody }
   | { kind: "spell_cast"; data: SpellCastBody }
-  | { kind: "status_effect"; data: StatusEffectBody }
+  | { kind: "effect_area"; data: EffectAreaBody }
   | { kind: "combat_float"; data: CombatFloatBody }
   | { kind: "auto_attack"; data: AutoAttackBody }
   | { kind: "support_ability_cast"; data: SupportAbilityCastBody }

@@ -15,9 +15,5 @@ export function decodeClientAreaFrame(reader: BinaryReader): ClientAreaBody {
   const fieldC = reader.u32();
   const fieldD = reader.u8();
 
-  if (reader.remaining > 0) {
-    reader.rest();
-  }
-
   return { mapName, coordA, coordB, fieldC, fieldD };
 }

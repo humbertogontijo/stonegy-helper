@@ -10,17 +10,17 @@ import {
   decodeCombatFloat,
   decodeCounterTriplet,
   decodeCooldownUpdate,
+  decodeEffectArea,
   decodeGroundItemUpdate,
   decodeHuntAnalyzerSnapshot,
   decodeHuntEntitySpawn,
   decodeHuntFrame,
   decodeKillEvent,
-  decodePlayerVitals,
   decodeSessionMetric,
   decodeGoldBalance,
-  decodeStatusEffect,
   decodeVitals,
   decodeXpGain,
+  decodeXpSummary,
 } from "./hunt-events.ts";
 import { decodeInventorySnapshot } from "./inventory-snapshot.ts";
 import { decodeMapBootstrap, sumMapBootstrapBlobBytes } from "./map-bootstrap.ts";
@@ -59,11 +59,10 @@ export function decodeBinaryMessage(input: Uint8Array | string): DecodedBinaryMe
 
     const reader = new BinaryReader(buffer);
     reader.seek(envelope.payloadOffset);
-    const payloadLength = buffer.length - envelope.payloadOffset;
 
     return {
       envelope,
-      body: decodeBody(envelope.type, reader, payloadLength),
+      body: decodeBody(envelope.type, reader),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -82,11 +81,11 @@ export function decodeBinaryMessage(input: Uint8Array | string): DecodedBinaryMe
   }
 }
 
-function decodeBody(type: number, reader: BinaryReader, payloadLength: number): DecodedBinaryBody {
+function decodeBody(type: number, reader: BinaryReader): DecodedBinaryBody {
   const payloadStart = reader.position;
 
   try {
-    return decodeBodyOrThrow(type, reader, payloadLength);
+    return decodeBodyOrThrow(type, reader);
   } catch (error) {
     reader.seek(payloadStart);
     return {
@@ -125,20 +124,20 @@ function validateDecodedBody(type: number, body: DecodedBinaryBody): DecodedBina
   return body;
 }
 
-export function decodeBodyOrThrow(
-  type: number,
-  reader: BinaryReader,
-  payloadLength: number
-): DecodedBinaryBody {
-  const body = decodeBodyOrThrowUnvalidated(type, reader, payloadLength);
-  return validateDecodedBody(type, body);
+export function decodeBodyOrThrow(type: number, reader: BinaryReader): DecodedBinaryBody {
+  const body = decodeBodyOrThrowUnvalidated(type, reader);
+  const validated = validateDecodedBody(type, body);
+  // Incomplete decoders must not silently discard leftovers and report the
+  // frame as fully known — any unread payload fails the decode (→ kind "unknown").
+  // Named trailers (trailingBytes / rawTail) are consumed into the body first;
+  // debug telemetry then marks those events unknown.
+  if (validated.kind !== "unknown") {
+    reader.assertExhausted(validated.kind);
+  }
+  return validated;
 }
 
-function decodeBodyOrThrowUnvalidated(
-  type: number,
-  reader: BinaryReader,
-  payloadLength: number
-): DecodedBinaryBody {
+function decodeBodyOrThrowUnvalidated(type: number, reader: BinaryReader): DecodedBinaryBody {
   switch (type) {
     case StonegyBinaryMessageType.Ping:
       return { kind: "ping" };
@@ -166,16 +165,16 @@ function decodeBodyOrThrowUnvalidated(
       return { kind: "inventory_snapshot", data: decodeInventorySnapshot(reader) };
     case StonegyBinaryMessageType.MarketSnapshot:
       return { kind: "market_snapshot", data: decodeMarketSnapshot(reader) };
-    case StonegyBinaryMessageType.PlayerUpdate:
-      return { kind: "player_update", data: decodePlayerVitals(reader, payloadLength) };
+    case StonegyBinaryMessageType.XpSummary:
+      return { kind: "xp_summary", data: decodeXpSummary(reader) };
     case StonegyBinaryMessageType.XpGain:
       return { kind: "xp_gain", data: decodeXpGain(reader) };
     case StonegyBinaryMessageType.SessionMetric:
       return { kind: "session_metric", data: decodeSessionMetric(reader) };
     case StonegyBinaryMessageType.Speech:
       return { kind: "speech", data: decodeSpeech(reader) };
-    case StonegyBinaryMessageType.StatusEffect:
-      return { kind: "status_effect", data: decodeStatusEffect(reader) };
+    case StonegyBinaryMessageType.EffectArea:
+      return { kind: "effect_area", data: decodeEffectArea(reader) };
     case StonegyBinaryMessageType.AbilityCast:
       return decodeAutoAttackOrDamage(reader, type);
     case StonegyBinaryMessageType.AutoAttack:
@@ -254,16 +253,26 @@ function decodeAutoAttackOrDamage(reader: BinaryReader, wireType: number): Decod
   return { kind: "auto_attack", data: body };
 }
 
+/**
+ * Type 0x17 — batched speech lines:
+ *   u16 entryCount
+ *   entryCount × { u8 mode (observed 2), u32 speakerIndex, u16 len, utf8 text }
+ * Live party frames bundle several members' spell yells per frame; the
+ * speakerIndex values match xp-share member indexes.
+ */
 function decodeSpeech(reader: BinaryReader): SpeechBody {
-  const channel = reader.u16();
-  const mode = reader.u16();
-  reader.u16();
-  reader.u8();
-  const length = reader.u8();
-  reader.u8();
-  const text = new TextDecoder().decode(reader.bytes(length));
+  const entryCount = reader.u16();
+  const entries: SpeechBody["entries"] = [];
 
-  return { channel, mode, text };
+  for (let index = 0; index < entryCount; index += 1) {
+    const mode = reader.u8();
+    const speakerIndex = reader.u32();
+    const length = reader.u16();
+    const text = new TextDecoder().decode(reader.bytes(length));
+    entries.push({ mode, speakerIndex, text });
+  }
+
+  return { entries };
 }
 
 export function isInventorySnapshot(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
@@ -342,8 +351,13 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
   switch (message.body.kind) {
     case "ping":
       return "ping";
-    case "hunt_entity_spawn":
-      return `hunt_spawn(${message.body.data.entities.length} entities, hunt=${message.body.data.huntId})`;
+    case "hunt_entity_spawn": {
+      const { entities, corpses, tiles, rawTail } = message.body.data;
+      const corpseSuffix = corpses.length > 0 ? `, ${corpses.length} corpses` : "";
+      const tileSuffix = tiles.length > 0 ? `, ${tiles.length} tiles` : "";
+      const tailSuffix = rawTail.length > 0 ? `, +${rawTail.length}b tail` : "";
+      return `hunt_spawn(${entities.length} entities${corpseSuffix}${tileSuffix}${tailSuffix})`;
+    }
     case "hunt_analyzer_snapshot": {
       const { totalKills, rawXp, xp, partyMembers } = message.body.data;
       return `hunt_analyzer(kills=${totalKills}, rawXp=${rawXp}, xp=${xp}, party=${partyMembers.length})`;
@@ -381,8 +395,16 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
     }
     case "entity_uuid_list":
       return `entity_uuid_list(${message.body.data.entityUuids.length} uuids)`;
-    case "analyzer_stats":
-      return `analyzer_stats(${message.body.data.values.join(", ")})`;
+    case "analyzer_stats": {
+      const { subType, totals, gauge } = message.body.data;
+      const totalsSuffix = totals
+        ? `, totals=[${totals.valueA}, ${totals.valueB}, ${totals.valueC}, ${totals.valueD}] ${totals.ratio.toFixed(2)}%`
+        : "";
+      const gaugeSuffix = gauge
+        ? `, gauge=0x${gauge.field.toString(16)} [${gauge.ratios.map((ratio) => `${ratio.toFixed(2)}%`).join(", ")}]`
+        : "";
+      return `analyzer_stats(sub=${subType}${totalsSuffix}${gaugeSuffix})`;
+    }
     case "counter_triplet":
       return `counter(${message.body.data.kind}, ${message.body.data.a}/${message.body.data.b}/${message.body.data.c})`;
     case "gold_balance":
@@ -403,22 +425,44 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
         message.body.data.totalPages;
       return `market(page ${page}/${totalPages}, ${sellOrders.length} sells, ${buyOrders.length} buys)`;
     }
-    case "player_update":
-      return `player(hp=${message.body.data.currentHp}, mana=${message.body.data.currentMana}, huntMs=${message.body.data.huntTimeMs})`;
-    case "xp_gain":
-      return `xp(+${message.body.data.xpGain}, session=${message.body.data.sessionXp})`;
+    case "xp_summary": {
+      const { xpGain, records } = message.body.data;
+      const detail = records
+        .map((record) => `+${record.xpGain}@${record.sessionXp}`)
+        .join(" ");
+      return `xp_summary(latest=+${xpGain}, ${records.length} records${detail ? ` ${detail}` : ""})`;
+    }
+    case "xp_gain": {
+      const { xpGain, sessionXp, shares } = message.body.data;
+      const shareSuffix =
+        shares.length > 0
+          ? `, shares=[${shares.map((share) => `${share.memberIndex}:${share.flag}`).join(", ")}]`
+          : "";
+      return `xp(+${xpGain}, session=${sessionXp}${shareSuffix})`;
+    }
     case "session_metric":
       return `session(stamina=${message.body.data.staminaMs}ms)`;
     case "speech":
-      return `speech("${message.body.data.text}")`;
+      return `speech(${message.body.data.entries
+        .map((entry) => `#${entry.speakerIndex} "${entry.text}"`)
+        .join(", ")})`;
     case "spell_cast": {
       const { strings, combatHits } = message.body.data;
       const monsterHits = combatHits.filter((hit) => hit.target === "monster").length;
       const hitSuffix = monsterHits > 0 ? `, ${monsterHits} monster hits` : "";
       return `spell(${strings.join(" / ")}${hitSuffix})`;
     }
-    case "status_effect":
-      return `status(target=${message.body.data.targetIndex}, effect=${message.body.data.effectId})`;
+    case "effect_area": {
+      const { records } = message.body.data;
+      const detail = records
+        .map((record) => {
+          const target = record.targetHandle ? `→${record.targetHandle}` : "";
+          const ref = record.refId != null ? ` ref=${record.refId}` : "";
+          return `0x${record.kind.toString(16)}@(${record.centerX},${record.centerY})×${record.tiles.length}${target}${ref}`;
+        })
+        .join(" ");
+      return `effect_area(${records.length} records${detail ? ` ${detail}` : ""})`;
+    }
     case "combat_float": {
       const { hits } = message.body.data;
       const detail = hits
@@ -435,26 +479,55 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
       const hitSuffix = monsterHits > 0 ? `, ${monsterHits} monster hits` : "";
       return `auto_attack(${strings.join(" / ")}${hitSuffix})`;
     }
-    case "support_ability_cast":
-      return `support_ability(${message.body.data.strings.join(" / ")})`;
+    case "support_ability_cast": {
+      const { entries } = message.body.data;
+      const named = entries.filter((entry) => entry.strings.length > 0);
+      const label =
+        named.length > 0
+          ? named.map((entry) => entry.strings.join(" / ")).join("; ")
+          : `refresh, duration=${entries[0]?.durationMs ?? 0}ms`;
+      const statusNames = entries
+        .flatMap((entry) => entry.statusEffects ?? [])
+        .map((status) => status.name);
+      const statusSuffix =
+        statusNames.length > 0 ? `, status: ${statusNames.join(", ")}` : "";
+      return `support_ability(${label}${statusSuffix})`;
+    }
     case "ground_item_update": {
-      const { subType, count, items, extra } = message.body.data;
+      const { subType, count, items, extra, refValues, refFlags } = message.body.data;
       const itemSuffix = items?.length
         ? `, items=${items.length} [${items
             .slice(0, 3)
             .map((item) => `${item.itemId}x${item.amount}`)
             .join(", ")}${items.length > 3 ? ", …" : ""}]`
         : "";
+      const refValueSuffix = refValues?.length
+        ? `, refs=[${refValues
+            .map((entry) => `${entry.ref}=${entry.value}`)
+            .join(", ")}]`
+        : "";
+      const refFlagSuffix = refFlags?.length
+        ? `, flags=[${refFlags
+            .map((entry) => `${entry.ref}:${entry.flag}`)
+            .join(", ")}]`
+        : "";
       const extraSuffix = extra != null ? `, extra=${extra}` : "";
-      return `ground_item(sub=${subType}, count=${count}${itemSuffix}${extraSuffix})`;
+      return `ground_item(sub=${subType}, count=${count}${itemSuffix}${refValueSuffix}${refFlagSuffix}${extraSuffix})`;
     }
     case "entity_move": {
-      const { name, delta, moveKind, state } = message.body.data;
-      return `entity_move(${name}, delta=${delta}, kind=${moveKind}, state=${state})`;
+      const detail = message.body.data.records
+        .map((record) => {
+          const outfit = record.appearance ? `, lvl=${record.appearance.level}` : "";
+          return `${record.name}: delta=${record.delta}, kind=${record.moveKind}, state=${record.state}${outfit}`;
+        })
+        .join("; ");
+      return `entity_move(${detail})`;
     }
     case "entity_position": {
-      const { name, delta, state } = message.body.data;
-      return `entity_position(${name}, delta=${delta}, state=${state})`;
+      const detail = message.body.data.records
+        .map((record) => `${record.name}: delta=${record.delta}, state=${record.state}`)
+        .join("; ");
+      return `entity_position(${detail})`;
     }
     case "map_bootstrap": {
       const { mapId, schemaVersion, sections } = message.body.data;

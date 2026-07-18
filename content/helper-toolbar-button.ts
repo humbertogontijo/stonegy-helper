@@ -124,6 +124,8 @@ function createPanel(): HTMLDivElement {
   const frame = document.createElement("iframe");
   frame.title = "Stonegy Helper";
   frame.src = popupUrl();
+  // Cross-origin extension iframes need an explicit allow for Clipboard API.
+  frame.allow = "clipboard-write";
   frame.style.cssText = "display:block;width:100%;height:100%;border:0;background:#050607;";
   panel.appendChild(frame);
   return panel;
@@ -147,6 +149,11 @@ export function mountHelperToolbarButton(): void {
   if (!panel) {
     panel = createPanel();
     document.documentElement.appendChild(panel);
+  } else {
+    const frame = panel.querySelector("iframe");
+    if (frame && !frame.allow.includes("clipboard-write")) {
+      frame.allow = "clipboard-write";
+    }
   }
 
   let open = !panel.hidden;

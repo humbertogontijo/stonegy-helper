@@ -39,7 +39,7 @@ function readEntry(reader: BinaryReader): MapBootstrapEntry | null {
   }
 
   if (isGroupEndMarker(reader)) {
-    reader.skip(GROUP_END_MARKER.length);
+    reader.bytes(GROUP_END_MARKER.length);
     return null;
   }
 
@@ -54,7 +54,7 @@ function readEntry(reader: BinaryReader): MapBootstrapEntry | null {
 
     while (reader.remaining > 0) {
       if (isGroupEndMarker(reader)) {
-        reader.skip(GROUP_END_MARKER.length);
+        reader.bytes(GROUP_END_MARKER.length);
         break;
       }
 
@@ -86,7 +86,8 @@ export function decodeMapBootstrap(reader: BinaryReader): MapBootstrapBody {
   const mapId = reader.u32();
   const schemaVersion = reader.u16();
   const reserved = reader.u16();
-  reader.skip(HEADER_SIZE - reader.position);
+  // Remainder of the fixed 16-byte header is zero padding in captures.
+  reader.consumeZeroPad(HEADER_SIZE - reader.position);
 
   const sections: MapBootstrapEntry[] = [];
   while (reader.remaining > 0) {

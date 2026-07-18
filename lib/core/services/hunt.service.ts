@@ -497,14 +497,17 @@ export class HuntService extends Service {
         );
 
         // Capacity finish: bag full — loot sell (if armed) then restart. Not terminal.
+        // Do not overwrite selling_loot / splitting_loot — loot may already own the finish.
         if (isCapacityHuntFinishReason(reason)) {
-          updatePlayerState(
-            this.ctx.session,
-            "idling",
-            deferForLoot || handlingLoot
-              ? "Finished by capacity — selling then restarting"
-              : "Finished by capacity — restarting"
-          );
+          if (!handlingLoot && !deferForLoot) {
+            updatePlayerState(this.ctx.session, "idling", "Finished by capacity — restarting");
+          } else if (!isHandlingLoot(this.ctx.session)) {
+            updatePlayerState(
+              this.ctx.session,
+              "idling",
+              "Finished by capacity — selling then restarting"
+            );
+          }
         }
 
         trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);

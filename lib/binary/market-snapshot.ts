@@ -3,7 +3,6 @@ import type { BinaryReader } from "./reader.ts";
 import type { BinaryMarketOrder, MarketSnapshotBody } from "./types.ts";
 
 const MARKET_ORDER_RESERVED_BYTES = 5;
-const MARKET_ORDER_CREATED_AT_BYTES = 8;
 
 function decodeMarketOrder(reader: BinaryReader, isBuyOrder: boolean): BinaryMarketOrder {
   const idLen = reader.u16();
@@ -14,7 +13,7 @@ function decodeMarketOrder(reader: BinaryReader, isBuyOrder: boolean): BinaryMar
   const eachPrice = reader.u64Safe();
   const itemAmount = reader.u32();
   const totalPrice = reader.u64Safe();
-  reader.skip(MARKET_ORDER_CREATED_AT_BYTES);
+  const createdAtMs = reader.u64Safe();
 
   return {
     id,
@@ -25,7 +24,7 @@ function decodeMarketOrder(reader: BinaryReader, isBuyOrder: boolean): BinaryMar
     eachPrice,
     itemAmount,
     totalPrice,
-    createdAt: "",
+    createdAt: new Date(createdAtMs).toISOString(),
   };
 }
 
@@ -62,11 +61,11 @@ function decodeOrderAnchors(
     buyOrderAnchors.push(reader.u64());
   }
 
-  if (reader.remaining > 0) {
-    reader.rest();
-  }
+  // Unmapped footer — recorded so the frame is not silently treated as complete.
+  const trailingBytes =
+    reader.remaining > 0 ? reader.rest() : new Uint8Array(0);
 
-  return { sellOrderAnchors, buyOrderAnchors };
+  return { sellOrderAnchors, buyOrderAnchors, trailingBytes };
 }
 
 
@@ -76,11 +75,12 @@ export function decodeMarketSnapshot(reader: BinaryReader): MarketSnapshotBody {
   const totalPages = reader.u16();
   const requestedItemId = reader.u32();
   const selectedItemTradableAmount = reader.u32();
-  reader.skip(16);
+  // Captures pad 16 zero bytes between the header and the sell-order list.
+  reader.consumeZeroPad(16);
 
   const sellOrders = decodeMarketOrderList(reader, false);
   const buyOrders = decodeMarketOrderList(reader, true);
-  const { sellOrderAnchors, buyOrderAnchors } = decodeOrderAnchors(
+  const { sellOrderAnchors, buyOrderAnchors, trailingBytes } = decodeOrderAnchors(
     reader,
     sellOrders.length,
     buyOrders.length
@@ -95,6 +95,7 @@ export function decodeMarketSnapshot(reader: BinaryReader): MarketSnapshotBody {
     buyOrders,
     sellOrderAnchors,
     buyOrderAnchors,
+    ...(trailingBytes.length > 0 ? { trailingBytes } : {}),
   };
 }
 

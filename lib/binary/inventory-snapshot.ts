@@ -45,7 +45,7 @@ export function readInventoryItemStringAttributes(
   return attributes;
 }
 
-function remainingUnitsFromFlagsAndAttributes(flagsA: number, attributes: string[]): number {
+export function remainingUnitsFromFlagsAndAttributes(flagsA: number, attributes: string[]): number {
   for (const attribute of attributes) {
     const match = TIMING_REMAINING_MS_ATTR.exec(attribute);
     if (!match) {
@@ -144,6 +144,26 @@ function tryDecodeAtBackpackCount(
     return null;
   }
 
+  // Large depots continue as bare `u16 count + items` blocks after the typed
+  // section (observed 18 + 24 items matching depotItemCount=42). Blocks stop
+  // at the zero pad (count=0) or when the remaining bytes cannot fit.
+  let totalCount = sectionCount;
+  while (reader.remaining >= 2) {
+    const mark = reader.position;
+    const blockCount = reader.u16();
+    if (blockCount <= 0 || reader.remaining < blockCount * INVENTORY_ITEM_SIZE) {
+      reader.seek(mark);
+      break;
+    }
+    try {
+      depotItems.push(...decodeInventoryItemList(reader, blockCount));
+    } catch {
+      reader.seek(mark);
+      break;
+    }
+    totalCount += blockCount;
+  }
+
   const depot: InventoryDepotSection = {
     sectionType,
     items: depotItems,
@@ -152,7 +172,7 @@ function tryDecodeAtBackpackCount(
   return {
     items,
     depot,
-    matchesDepotHeader: sectionCount === depotItemCount,
+    matchesDepotHeader: totalCount === depotItemCount,
   };
 }
 
@@ -207,9 +227,8 @@ export function decodeInventorySnapshot(reader: BinaryReader): InventorySnapshot
       depot: undefined,
     };
 
-  if (reader.remaining > 0) {
-    reader.rest();
-  }
+  // Observed frames append an all-zero trailer after backpack/depot sections.
+  reader.consumeTrailingZeroPad();
 
   return {
     goldCoins,

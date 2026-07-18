@@ -18,6 +18,7 @@ const DAMAGE_ELEMENT_LABELS: Record<number, string> = {
   4: "Energy",
   5: "Mana",
   6: "Holy",
+  7: "Death",
   8: "Physical",
   9: "Life Drain",
 };

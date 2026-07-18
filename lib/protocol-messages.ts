@@ -84,6 +84,7 @@ export const SendMessageTypes = {
   NPC_BUY_ITEM: "npc_buy_item",
   APPEARANCE_SHOP_BUY: "appearance_shop_buy",
   DEPOT_MOVE_ITEM: "depot_move_item",
+  EQUIP_ITEM: "equip_item",
   HOUSE_PUBLIC_SNAPSHOT: "house_public_snapshot",
   ADD_DAILY_BOSS: "add_daily_boss",
   START_BOSS_FIGHT: "start_boss_fight",
@@ -848,6 +849,10 @@ export const depotMoveItemPayloadSchema = strictObject({
   depotBoxIndex: z.number(),
 });
 
+export const equipItemPayloadSchema = strictObject({
+  inventoryId: z.string(),
+});
+
 export const housePublicSnapshotPayloadSchema = strictObject({
   houseId: z.number(),
 });
@@ -1018,6 +1023,7 @@ export const sendPayloadSchemas = {
   [SendMessageTypes.NPC_BUY_ITEM]: npcBuyItemPayloadSchema,
   [SendMessageTypes.APPEARANCE_SHOP_BUY]: appearanceShopBuyPayloadSchema,
   [SendMessageTypes.DEPOT_MOVE_ITEM]: depotMoveItemPayloadSchema,
+  [SendMessageTypes.EQUIP_ITEM]: equipItemPayloadSchema,
   [SendMessageTypes.HOUSE_PUBLIC_SNAPSHOT]: housePublicSnapshotPayloadSchema,
   [SendMessageTypes.ADD_DAILY_BOSS]: bossIdPayloadSchema,
   [SendMessageTypes.START_BOSS_FIGHT]: bossIdPayloadSchema,
@@ -1343,6 +1349,7 @@ export type NpcBuyItemPayload = z.infer<typeof npcBuyItemPayloadSchema>;
 export type NpcItemShopPurchaseResultPayload = z.infer<typeof npcItemShopPurchaseResultPayloadSchema>;
 export type AppearanceShopBuyPayload = z.infer<typeof appearanceShopBuyPayloadSchema>;
 export type DepotMoveItemPayload = z.infer<typeof depotMoveItemPayloadSchema>;
+export type EquipItemPayload = z.infer<typeof equipItemPayloadSchema>;
 export type HousePublicSnapshotPayload = z.infer<typeof housePublicSnapshotPayloadSchema>;
 export type AppearanceShopPurchaseResultPayload = z.infer<
   typeof appearanceShopPurchaseResultPayloadSchema
@@ -1442,23 +1449,60 @@ export const entityRefSchema = strictObject({
 });
 export type EntityRef = z.infer<typeof entityRefSchema>;
 
-export const huntEntitySpawnEntrySchema = looseObject({
+export const huntEntitySpawnLiveEntrySchema = looseObject({
   marker: z.number(),
+  runtimeIndex: z.number(),
   uuid: z.string(),
-  value: z.number(),
-  fieldB: z.number().optional(),
-  fieldC: z.number().optional(),
-  fieldD: z.number().optional(),
-  payloadLen: z.number().optional(),
+  monsterId: z.number(),
+  currentHp: z.number(),
+  maxHp: z.number(),
+  dx: z.number(),
+  dy: z.number(),
+  direction: z.number(),
+  spawnedAt: z.number(),
 });
-export type HuntEntitySpawnEntry = z.infer<typeof huntEntitySpawnEntrySchema>;
+export type HuntEntitySpawnLiveEntry = z.infer<typeof huntEntitySpawnLiveEntrySchema>;
+
+/** @deprecated Prefer HuntEntitySpawnLiveEntry — kept as an alias for older imports. */
+export type HuntEntitySpawnEntry = HuntEntitySpawnLiveEntry;
+
+export const huntEntitySpawnCorpseEntrySchema = looseObject({
+  uuid: z.string(),
+  monsterId: z.number(),
+  /** Corpse item id from the monster table (e.g. 30122 for Crazed Winter Vanguard). */
+  corpseId: z.number(),
+  flagA: z.number(),
+  flagB: z.number(),
+  dx: z.number(),
+  dy: z.number(),
+  timestamp: z.number(),
+});
+export type HuntEntitySpawnCorpseEntry = z.infer<typeof huntEntitySpawnCorpseEntrySchema>;
+
+export const huntEntitySpawnTileSchema = looseObject({
+  dx: z.number(),
+  dy: z.number(),
+});
+export type HuntEntitySpawnTile = z.infer<typeof huntEntitySpawnTileSchema>;
+
+/**
+ * Present when tileCount > 0. Same relatedEntityRef + extra layout as
+ * ground_item_update short tiles (extra often 11000/12000 ms).
+ */
+export const huntEntitySpawnTileFooterSchema = looseObject({
+  flag: z.number(),
+  relatedEntityRef: entityRefSchema,
+  extra: z.number(),
+});
+export type HuntEntitySpawnTileFooter = z.infer<typeof huntEntitySpawnTileFooterSchema>;
 
 export const huntEntitySpawnBodySchema = looseObject({
-  entityCount: z.number(),
-  huntId: z.number(),
-  lureId: z.number(),
-  entities: z.array(huntEntitySpawnEntrySchema),
-  footerFlags: z.array(z.number()).optional(),
+  entities: z.array(huntEntitySpawnLiveEntrySchema),
+  corpses: z.array(huntEntitySpawnCorpseEntrySchema),
+  /** Nearby tile offsets after the corpse list (Moore-neighbourhood subset). */
+  tiles: z.array(huntEntitySpawnTileSchema),
+  tileFooter: huntEntitySpawnTileFooterSchema.optional(),
+  rawTail: z.instanceof(Uint8Array),
 });
 export type HuntEntitySpawnBody = z.infer<typeof huntEntitySpawnBodySchema>;
 
@@ -1490,6 +1534,16 @@ export const itemGrantBodySchema = strictObject({
   flagsA: z.number(),
   flagsB: z.number(),
   remainingUnits: z.number(),
+  /**
+   * String attribute block when (flagsA & 0x4), same layout as inventory
+   * items (e.g. `timing_remaining_ms=…` on timed rings).
+   */
+  attributes: z.array(z.string()).optional(),
+  /**
+   * Trailing uuid list: u16 count + (u16 len + uuid). Observed with one
+   * UUIDv7 entry alongside a v4 groundUuid — likely the source item/entity.
+   */
+  relatedUuids: z.array(z.string()).optional(),
 });
 export type ItemGrantBody = z.infer<typeof itemGrantBodySchema>;
 
@@ -1519,17 +1573,41 @@ export const huntAnalyzerLootItemSchema = strictObject({
 });
 export type HuntAnalyzerLootItem = z.infer<typeof huntAnalyzerLootItemSchema>;
 
+/**
+ * One member row in the type-0x05 party section. `profitGold` is the member's
+ * own loot − supplies; `transferGold` is `profitPerMember − profitGold`
+ * (positive receives, negative pays), mirrored into `receiveGold` / `payGold`.
+ * Both directions are zero on the leader's row (`isLeaderRow`) — the leader
+ * executes the split rather than transferring to themselves.
+ */
 export const huntAnalyzerPartyMemberSchema = looseObject({
+  playerId: z.string(),
+  name: z.string(),
+  isLeaderRow: z.boolean(),
+  lootTotalValue: z.number(),
+  suppliesGold: z.number(),
+  profitGold: z.number(),
+  transferGold: z.number(),
+  receiveGold: z.number(),
+  payGold: z.number(),
+});
+export type HuntAnalyzerPartyMember = z.infer<typeof huntAnalyzerPartyMemberSchema>;
+
+/**
+ * Leader totals block that opens the party section: party-wide loot/supplies/
+ * profit plus the per-member share (`profitPerMember`, floored) and the
+ * division remainder the leader row absorbs.
+ */
+export const huntAnalyzerPartyTotalsSchema = looseObject({
   playerId: z.string(),
   name: z.string(),
   lootTotalValue: z.number(),
   suppliesGold: z.number(),
   profitGold: z.number(),
-  balanceGold: z.number(),
-  huntTimeMs: z.number().optional(),
-  isSummaryRow: z.boolean().optional(),
+  profitPerMember: z.number(),
+  remainderGold: z.number(),
 });
-export type HuntAnalyzerPartyMember = z.infer<typeof huntAnalyzerPartyMemberSchema>;
+export type HuntAnalyzerPartyTotals = z.infer<typeof huntAnalyzerPartyTotalsSchema>;
 
 export const huntAnalyzerSnapshotBodySchema = looseObject({
   subType: z.number(),
@@ -1546,15 +1624,38 @@ export const huntAnalyzerSnapshotBodySchema = looseObject({
   suppliesGold: z.number(),
   lootItems: z.array(huntAnalyzerLootItemSchema),
   partyMembers: z.array(huntAnalyzerPartyMemberSchema),
-  partyLeaderTotals: huntAnalyzerPartyMemberSchema.optional(),
+  partyLeaderTotals: huntAnalyzerPartyTotalsSchema.optional(),
 });
 export type HuntAnalyzerSnapshotBody = z.infer<typeof huntAnalyzerSnapshotBodySchema>;
 
+/**
+ * Type 0x0b — analyzer stat tick. `subType` is a bitfield selecting which
+ * blocks follow (observed subTypes 6, 8, 14):
+ *   bits 0x06 → totals block: u64 valueA, u32 valueB, u64 valueC, u64 valueD, f32 ratio
+ *   bit  0x08 → gauge block: u16 field bitmask, one f32 ratio per set bit
+ * Values grow monotonically over a hunt session (valueA in the hundreds of
+ * millions, valueC tracks session xp scale); ratios look like percentages.
+ */
+export const analyzerStatsTotalsSchema = strictObject({
+  valueA: z.number(),
+  valueB: z.number(),
+  valueC: z.number(),
+  valueD: z.number(),
+  ratio: z.number(),
+});
+export type AnalyzerStatsTotals = z.infer<typeof analyzerStatsTotalsSchema>;
+
+export const analyzerStatsGaugeSchema = strictObject({
+  /** Bitmask of gauge slots present; `ratios` carries one value per set bit. */
+  field: z.number(),
+  ratios: z.array(z.number()),
+});
+export type AnalyzerStatsGauge = z.infer<typeof analyzerStatsGaugeSchema>;
+
 export const analyzerStatsBodySchema = strictObject({
   subType: z.number(),
-  fieldA: z.number(),
-  fieldB: z.number(),
-  values: z.array(z.number()),
+  totals: analyzerStatsTotalsSchema.optional(),
+  gauge: analyzerStatsGaugeSchema.optional(),
 });
 export type AnalyzerStatsBody = z.infer<typeof analyzerStatsBodySchema>;
 
@@ -1738,15 +1839,42 @@ export const autoAttackBodySchema = strictObject({
   combatHits: z.array(abilityCombatHitSchema),
 });
 
-export const statusEffectBodySchema = strictObject({
-  mode: z.number(),
-  targetIndex: z.number(),
-  effectId: z.number(),
-  value: z.number(),
-  duration: z.number(),
-  flags: z.number(),
+export const effectAreaTileSchema = strictObject({
+  dx: z.number(),
+  dy: z.number(),
 });
-export type StatusEffectBody = z.infer<typeof statusEffectBodySchema>;
+export type EffectAreaTile = z.infer<typeof effectAreaTileSchema>;
+
+/**
+ * One record on type 0x18 (formerly misread as a fixed status_effect layout).
+ * `kind` is a bitfield selecting which tail fields follow the tile list:
+ *   bit0 (0x01)      → sourceHandle (4-byte runtime entity handle, hex)
+ *   bits 0x06        → targetHandle + targetDx/targetDy (always seen together)
+ *   bit6 (0x40)      → refId + magnitude (f32; observed 0.3 and 1.5)
+ * Observed kinds: 0x00, 0x01, 0x07, 0x41, 0x47. Tile lists trace spell/effect
+ * areas (3×3 squares, radius-3 blobs) centred on (centerX, centerY).
+ */
+export const effectAreaRecordSchema = strictObject({
+  kind: z.number(),
+  centerX: z.number(),
+  centerY: z.number(),
+  tiles: z.array(effectAreaTileSchema),
+  /** 4-byte runtime entity handle (same format as visual_update entityHandle). */
+  sourceHandle: z.string().optional(),
+  targetHandle: z.string().optional(),
+  targetDx: z.number().optional(),
+  targetDy: z.number().optional(),
+  /** Matches monster ids in captures (123 Winter Court, 70); semantics unconfirmed. */
+  refId: z.number().optional(),
+  magnitude: z.number().optional(),
+});
+export type EffectAreaRecord = z.infer<typeof effectAreaRecordSchema>;
+
+/** Type 0x18 — batched effect/AoE area records. */
+export const effectAreaBodySchema = strictObject({
+  records: z.array(effectAreaRecordSchema),
+});
+export type EffectAreaBody = z.infer<typeof effectAreaBodySchema>;
 
 /** Alias — shared with JSON ReceiveMessageTypes.GOLD_BALANCE. */
 export type GoldBalanceBody = GoldBalancePayload;
@@ -1763,8 +1891,26 @@ export const binaryInventoryItemEntrySchema = looseObject({
   suffix: z.number().optional(),
 });
 
+/**
+ * {u16 ref, u16 value} pair from the 0x1a list variant. Refs are clustered and
+ * grow over the session (1148→2106 within a minute) — most likely runtime
+ * ground-entity indexes, not item ids. Value semantics unconfirmed.
+ */
+export const groundRefValueEntrySchema = strictObject({
+  ref: z.number(),
+  value: z.number(),
+});
+export type GroundRefValueEntry = z.infer<typeof groundRefValueEntrySchema>;
+
+/** Trailing {u16 ref, u8 flag} entry from the 0x1a list variant (flag 0 or 1). */
+export const groundRefFlagEntrySchema = strictObject({
+  ref: z.number(),
+  flag: z.number(),
+});
+export type GroundRefFlagEntry = z.infer<typeof groundRefFlagEntrySchema>;
+
 export const groundItemUpdateBodySchema = looseObject({
-  entityRef: entityRefSchema,
+  entityRef: entityRefSchema.optional(),
   subType: z.number(),
   count: z.number(),
   header: z.array(z.number()).optional(),
@@ -1773,23 +1919,44 @@ export const groundItemUpdateBodySchema = looseObject({
   relatedEntityRef: entityRefSchema.optional(),
   extra: z.number().optional(),
   item: binaryInventoryItemEntrySchema.optional(),
+  /** Present on the ref/value list variant (zero-prefixed short frames). */
+  refValues: z.array(groundRefValueEntrySchema).optional(),
+  refFlags: z.array(groundRefFlagEntrySchema).optional(),
 });
 export type GroundItemUpdateBody = z.infer<typeof groundItemUpdateBodySchema>;
 
-export const playerVitalsBodySchema = looseObject({
-  currentHp: z.number(),
-  currentMana: z.number(),
-  huntTimeMs: z.number(),
-  raw: z.instanceof(Uint8Array),
+/** Per-member entry on an xp record's share list (flag semantics unconfirmed). */
+export const xpShareEntrySchema = strictObject({
+  memberIndex: z.number(),
+  flag: z.number(),
 });
-export type PlayerVitalsBody = z.infer<typeof playerVitalsBodySchema>;
+export type XpShareEntry = z.infer<typeof xpShareEntrySchema>;
 
+/**
+ * Type 0x15 — one xp record: u32 xpGain, u64 sessionXp, u16 memberCount,
+ * u8 shareCount, shareCount × (u8 memberIndex, u8 flag). `sessionXp`
+ * accumulates per xp source across the session; `memberCount` ≥ shares.length
+ * (party size the record applies to).
+ */
 export const xpGainBodySchema = strictObject({
-  kind: z.number(),
   xpGain: z.number(),
   sessionXp: z.number(),
+  memberCount: z.number(),
+  shares: z.array(xpShareEntrySchema),
 });
 export type XpGainBody = z.infer<typeof xpGainBodySchema>;
+
+/**
+ * Type 0x14 (formerly misread as fixed-offset "player vitals") — batch of xp
+ * records sent on hunt bootstrap/reconnect: u32 xpGain (matches one record's
+ * xpGain, most recently the latest), u16 recordCount, then records with the
+ * same layout as type 0x15.
+ */
+export const xpSummaryBodySchema = strictObject({
+  xpGain: z.number(),
+  records: z.array(xpGainBodySchema),
+});
+export type XpSummaryBody = z.infer<typeof xpSummaryBodySchema>;
 
 export const sessionMetricBodySchema = strictObject({
   byteA: z.number(),
@@ -1822,10 +1989,10 @@ export const binaryPayloadSchemas: Partial<Record<number, z.ZodType>> = {
   0x0b: analyzerStatsBodySchema, // AnalyzerStats
   0x0c: counterTripletBodySchema, // CounterTriplet
   0x0d: goldBalancePayloadSchema, // GoldBalance — shared with JSON GOLD_BALANCE
-  0x14: playerVitalsBodySchema, // PlayerUpdate
+  0x14: xpSummaryBodySchema, // XpSummary
   0x15: xpGainBodySchema, // XpGain
   0x16: sessionMetricBodySchema, // SessionMetric
-  0x18: statusEffectBodySchema, // StatusEffect
+  0x18: effectAreaBodySchema, // EffectArea
   // 0x19 AutoAttack / 0x12 AbilityCast — multiplexed (combat_float | auto_attack | support_ability_cast)
   0x1a: groundItemUpdateBodySchema, // GroundItemUpdate
   0x1c: spellCastBodySchema, // SpellCast

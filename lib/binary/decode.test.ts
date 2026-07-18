@@ -31,6 +31,11 @@ import {
   expectedAbilityCastFrontSweep,
   expectedAbilityCastBatchedMultiCast,
   expectedSupportAbilityCastUtitoTempo,
+  expectedSupportAbilityCastUtamoMulti,
+  expectedSupportAbilityCastUtamoTempoBurning,
+  expectedSupportAbilityCastContinuationOnly,
+  expectedSupportAbilityCastUtamoVitaByteA3,
+  expectedHuntAnalyzerSnapshotFreshHunt,
   expectedCombatFloatHeal52,
   expectedCombatFloatMultiHit,
   expectedCombatFloatFire700,
@@ -44,7 +49,7 @@ import {
   expectedHuntLootDrops,
   expectedHuntLootStarterItemGrant,
   expectedHuntAnalyzerSnapshotCompact,
-  expectedPlayerVitals,
+  expectedXpSummaryReconnect,
   expectedSessionMetric,
   huntTrafficFixtures,
 } from "./fixtures/hunt-traffic.ts";
@@ -95,7 +100,7 @@ describe("BinaryReader", () => {
     const reader = new BinaryReader(bytes);
     reader.seek(23);
 
-    expect(reader.uuid()).toBe("019f3d13-fc21-722a-9070-22028dfdf2b7");
+    expect(reader.uuid()).toBe("55555555-5555-7555-8555-000000000002");
   });
 });
 
@@ -125,7 +130,7 @@ describe("decodeBinaryMessage", () => {
     expect(data.items.map(({ itemId, amount }) => ({ itemId, amount })).slice(0, 9)).toEqual(
       expectedInventoryItemsDuringHunt
     );
-    expect(data.items[0]?.uuid).toBe("019f3d13-fc21-722a-9070-22028dfdf2b7");
+    expect(data.items[0]?.uuid).toBe("55555555-5555-7555-8555-000000000002");
     expect(data.depot?.sectionType).toBe(20);
     expect(data.depot?.items).toHaveLength(9);
     expect(summarizeBinaryMessage(message)).toBe("inventory(13 items, 31476 gold, depot 9)");
@@ -161,8 +166,27 @@ describe("decodeBinaryMessage", () => {
       throw new Error("expected speech body");
     }
 
-    expect(message.body.data.text).toBe("exevh mas san");
-    expect(message.body.data.channel).toBe(1);
+    expect(message.body.data.entries).toEqual([
+      { mode: 2, speakerIndex: 1, text: "exevh mas san" },
+    ]);
+  });
+
+  it("decodes batched multi-speaker speech frames", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.speechBatchedParty);
+
+    expect(message.body.kind).toBe("speech");
+    if (message.body.kind !== "speech") {
+      throw new Error("expected speech body");
+    }
+
+    expect(message.body.data.entries).toEqual([
+      { mode: 2, speakerIndex: 1, text: "exori min" },
+      { mode: 2, speakerIndex: 2, text: "exevo mas san" },
+      { mode: 2, speakerIndex: 4, text: "exori flam" },
+    ]);
+    expect(summarizeBinaryMessage(message)).toBe(
+      'speech(#1 "exori min", #2 "exevo mas san", #4 "exori flam")'
+    );
   });
 
   it("decodes spell cast frames with embedded strings", () => {
@@ -253,10 +277,256 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(expectedSupportAbilityCastUtitoTempo.strings);
+    expect(message.body.data.entries).toEqual(expectedSupportAbilityCastUtitoTempo.entries);
     expect(message.body.data.effectTail).toEqual(expectedSupportAbilityCastUtitoTempo.effectTail);
     expect(message.body.data.rawTail.length).toBe(0);
     expect(summarizeBinaryMessage(message)).toBe(
       "support_ability(UTITO_TEMPO / Utito Tempo / Blood_Rage.gif)"
+    );
+  });
+
+  it("decodes type-0x12 multi-buff support frames (Utamo Vita + Utamo Tempo)", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastSupportUtamoMulti);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.AbilityCast);
+    expect(message.body.kind).toBe("support_ability_cast");
+    if (message.body.kind !== "support_ability_cast") {
+      throw new Error("expected support_ability_cast body");
+    }
+
+    expect(message.body.data.strings).toEqual(expectedSupportAbilityCastUtamoMulti.strings);
+    expect(message.body.data.entries).toEqual(expectedSupportAbilityCastUtamoMulti.entries);
+    expect(message.body.data.effectTail?.extra).toBe(100);
+    expect(message.body.data.rawTail.length).toBe(0);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "support_ability(UTAMO_VITA / Magic Shield / Magic_Shield.gif; UTAMO_TEMPO / Utamo Tempo / Protector.gif)"
+    );
+  });
+
+  it("decodes type-0x12 support frames with attached status effects (Burning)", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastSupportUtamoTempoBurning);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.AbilityCast);
+    expect(message.body.kind).toBe("support_ability_cast");
+    if (message.body.kind !== "support_ability_cast") {
+      throw new Error("expected support_ability_cast body");
+    }
+
+    expect(message.body.data.strings).toEqual(expectedSupportAbilityCastUtamoTempoBurning.strings);
+    expect(message.body.data.entries).toEqual(expectedSupportAbilityCastUtamoTempoBurning.entries);
+    expect(message.body.data.effectTail?.statusEffects).toEqual(
+      expectedSupportAbilityCastUtamoTempoBurning.entries[0].statusEffects
+    );
+    expect(message.body.data.rawTail.length).toBe(0);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "support_ability(UTAMO_TEMPO / Utamo Tempo / Protector.gif, status: Burning)"
+    );
+  });
+
+  it("decodes handle-less effect area records (kind 0x00)", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.statusEffectClearShort);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.EffectArea);
+    expect(message.body.kind).toBe("effect_area");
+    if (message.body.kind !== "effect_area") {
+      throw new Error("expected effect_area body");
+    }
+
+    expect(message.body.data).toEqual({
+      records: [
+        { kind: 0, centerX: -1, centerY: -1, tiles: [{ dx: 0, dy: 0 }] },
+      ],
+    });
+    expect(summarizeBinaryMessage(message)).toBe(
+      "effect_area(1 records 0x0@(-1,-1)×1)"
+    );
+  });
+
+  it("decodes multi-record effect area frames with kind-gated tails", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.effectAreaThreeRecords);
+
+    expect(message.body.kind).toBe("effect_area");
+    if (message.body.kind !== "effect_area") {
+      throw new Error("expected effect_area body");
+    }
+
+    expect(message.body.data.records).toEqual([
+      {
+        kind: 0x01,
+        centerX: 0,
+        centerY: 0,
+        tiles: [{ dx: 0, dy: 0 }],
+        sourceHandle: "a218dbf9",
+      },
+      {
+        kind: 0x41,
+        centerX: 0,
+        centerY: 0,
+        tiles: [
+          { dx: 1, dy: 1 },
+          { dx: 0, dy: 1 },
+          { dx: -1, dy: 1 },
+          { dx: 1, dy: 0 },
+          { dx: 0, dy: 0 },
+          { dx: -1, dy: 0 },
+          { dx: 1, dy: -1 },
+          { dx: 0, dy: -1 },
+          { dx: -1, dy: -1 },
+        ],
+        sourceHandle: "fef390e5",
+        refId: 123,
+        magnitude: expect.closeTo(0.3, 5),
+      },
+      {
+        kind: 0x47,
+        centerX: -2,
+        centerY: 0,
+        tiles: [{ dx: 0, dy: 1 }],
+        sourceHandle: "fef390e5",
+        targetHandle: "a3e84e76",
+        targetDx: 0,
+        targetDy: 1,
+        refId: 123,
+        magnitude: expect.closeTo(0.3, 5),
+      },
+    ]);
+  });
+
+  it("decodes continuation-only type-0x12 support frames (no strings)", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastSupportContinuationOnly);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.AbilityCast);
+    expect(message.body.kind).toBe("support_ability_cast");
+    if (message.body.kind !== "support_ability_cast") {
+      throw new Error("expected support_ability_cast body");
+    }
+
+    expect(message.body.data.entries).toEqual(
+      expectedSupportAbilityCastContinuationOnly.entries
+    );
+    expect(message.body.data.strings).toEqual([]);
+    expect(message.body.data.rawTail.length).toBe(0);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "support_ability(refresh, duration=12000ms)"
+    );
+  });
+
+  it("decodes entity uuid lists larger than 100 entries", () => {
+    // Synthesized from a live 5173-byte capture: header + 136 × (u16 len + uuid).
+    const uuidCount = 136;
+    const header = new Uint8Array([0x53, 0x47, 0x05, 0x0a, 0x00, 0x00, 0x00, uuidCount, 0x00]);
+    const chunks: number[] = [...header];
+    for (let index = 0; index < uuidCount; index += 1) {
+      const uuid = `019f760a-2f70-711e-83ce-${index.toString(16).padStart(12, "0")}`;
+      chunks.push(36, 0, ...[...uuid].map((char) => char.charCodeAt(0)));
+    }
+
+    const message = decodeBinaryMessage(new Uint8Array(chunks));
+    expect(message.body.kind).toBe("entity_uuid_list");
+    if (message.body.kind !== "entity_uuid_list") {
+      throw new Error("expected entity_uuid_list body");
+    }
+    expect(message.body.data.entityCount).toBe(uuidCount);
+    expect(message.body.data.entityUuids).toHaveLength(uuidCount);
+    expect(summarizeBinaryMessage(message)).toBe("entity_uuid_list(136 uuids)");
+  });
+
+  it("decodes fresh-hunt analyzer snapshots without a monster table", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.huntAnalyzerSnapshotFreshHunt);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.HuntAnalyzerSnapshot);
+    expect(message.body.kind).toBe("hunt_analyzer_snapshot");
+    if (message.body.kind !== "hunt_analyzer_snapshot") {
+      throw new Error("expected hunt_analyzer_snapshot body");
+    }
+
+    const expected = expectedHuntAnalyzerSnapshotFreshHunt;
+    expect(message.body.data).toMatchObject({
+      totalKills: expected.totalKills,
+      monsterCount: expected.monsterCount,
+      primaryMonsterId: expected.primaryMonsterId,
+      monsters: [],
+      rawXp: expected.rawXp,
+      lootBalanceGold: expected.lootBalanceGold,
+      xp: expected.xp,
+      suppliesGold: expected.suppliesGold,
+      lootItems: [],
+    });
+    expect(
+      message.body.data.partyMembers.map(({ playerId: _playerId, ...member }) => member)
+    ).toEqual([...expected.partyMembers]);
+    expect(message.body.data.partyLeaderTotals).toMatchObject(expected.partyLeaderTotals);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "hunt_analyzer(kills=0, rawXp=964, xp=172828, party=4)"
+    );
+  });
+
+  it("decodes training-idle analyzer snapshots with zero-valued party rows", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.huntAnalyzerSnapshotTrainingIdle);
+
+    expect(message.body.kind).toBe("hunt_analyzer_snapshot");
+    if (message.body.kind !== "hunt_analyzer_snapshot") {
+      throw new Error("expected hunt_analyzer_snapshot body");
+    }
+
+    expect(message.body.data.partyLeaderTotals).toMatchObject({
+      name: "Leader1",
+      lootTotalValue: 0,
+      suppliesGold: 216,
+      profitGold: -216,
+      profitPerMember: -54,
+      remainderGold: 0,
+    });
+    expect(
+      message.body.data.partyMembers.map(({ name, transferGold, receiveGold, payGold }) => ({
+        name,
+        transferGold,
+        receiveGold,
+        payGold,
+      }))
+    ).toEqual([
+      { name: "Bravo", transferGold: 162, receiveGold: 162, payGold: 0 },
+      { name: "Leader1", transferGold: -54, receiveGold: 0, payGold: 0 },
+      { name: "Charlie", transferGold: -54, receiveGold: 0, payGold: 54 },
+      { name: "Delta", transferGold: -54, receiveGold: 0, payGold: 54 },
+    ]);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "hunt_analyzer(kills=0, rawXp=0, xp=0, party=4)"
+    );
+  });
+
+  it("decodes live party analyzer snapshots with an uneven loot split", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.huntAnalyzerLiveParty);
+
+    expect(message.body.kind).toBe("hunt_analyzer_snapshot");
+    if (message.body.kind !== "hunt_analyzer_snapshot") {
+      throw new Error("expected hunt_analyzer_snapshot body");
+    }
+
+    const expected = expectedWinterCourt.huntAnalyzerLiveParty;
+    expect(message.body.data.partyLeaderTotals).toEqual(expected.partyLeaderTotals);
+    expect(
+      message.body.data.partyMembers.map(({ playerId: _playerId, ...member }) => member)
+    ).toEqual([...expected.partyMembers]);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "hunt_analyzer(kills=958, rawXp=455616, xp=468109, party=4)"
+    );
+  });
+
+  it("decodes type-0x12 Magic Shield with header.byteA=0x03", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastSupportUtamoVitaByteA3);
+
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.AbilityCast);
+    expect(message.body.kind).toBe("support_ability_cast");
+    if (message.body.kind !== "support_ability_cast") {
+      throw new Error("expected support_ability_cast body");
+    }
+
+    expect(message.body.data.strings).toEqual(expectedSupportAbilityCastUtamoVitaByteA3.strings);
+    expect(message.body.data.entries).toEqual(expectedSupportAbilityCastUtamoVitaByteA3.entries);
+    expect(message.body.data.effectTail).toEqual(expectedSupportAbilityCastUtamoVitaByteA3.effectTail);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "support_ability(UTAMO_VITA / Magic Shield / Magic_Shield.gif)"
     );
   });
 
@@ -392,7 +662,7 @@ describe("decodeBinaryMessage", () => {
     expect(summarizeBinaryMessage(message)).toBe("client_area(stonegy-home, -3, -2)");
   });
 
-  it("decodes market snapshot frames into sell and buy orders", () => {
+  it("decodes market snapshot frames into sell and buy orders with an unmapped footer", () => {
     const message = decodeBinaryMessage(binaryMarketSnapshotBrowse);
 
     expect(message.envelope.type).toBe(StonegyBinaryMessageType.MarketSnapshot);
@@ -417,8 +687,8 @@ describe("decodeBinaryMessage", () => {
         tier: 0,
         isOwnOrder: false,
         isBuyOrder: false,
-        createdAt: "",
       });
+      expect(data.sellOrders[index]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
 
     for (const [index, expected] of expectedBinaryMarketSnapshotBrowse.buyOrders.entries()) {
@@ -426,8 +696,8 @@ describe("decodeBinaryMessage", () => {
         ...expected,
         tier: 0,
         isBuyOrder: true,
-        createdAt: "",
       });
+      expect(data.buyOrders[index]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
 
     const protocolData = marketSnapshotBodyToData(data);
@@ -436,6 +706,7 @@ describe("decodeBinaryMessage", () => {
     expect(summarizeBinaryMessage(message)).toBe("market(page 1/463, 7 sells, 2 buys)");
     expect(data.sellOrderAnchors).toHaveLength(7);
     expect(data.buyOrderAnchors).toHaveLength(2);
+    expect(data.trailingBytes?.length).toBeGreaterThan(0);
   });
 
   it("decodes map bootstrap frames into a section tree", () => {
@@ -455,17 +726,27 @@ describe("decodeBinaryMessage", () => {
     expect(summarizeBinaryMessage(message)).toBe("map(id=65548, schema=259, tileData=1651b)");
   });
 
-  it("preserves opaque payloads for player update frames", () => {
+  it("decodes xp summary batches from type 0x14 frames", () => {
     const message = decodeBinaryMessage(binaryFixtures.playerUpdate);
 
-    expect(message.envelope.type).toBe(StonegyBinaryMessageType.PlayerUpdate);
-    expect(message.body.kind).toBe("player_update");
-    if (message.body.kind !== "player_update") {
-      throw new Error("expected player_update body");
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.XpSummary);
+    expect(message.body.kind).toBe("xp_summary");
+    if (message.body.kind !== "xp_summary") {
+      throw new Error("expected xp_summary body");
     }
 
-    expect(message.body.data.currentMana).toBe(108);
-    expect(message.body.data.raw.length).toBe(61);
+    expect(message.body.data.xpGain).toBe(125);
+    expect(message.body.data.records).toHaveLength(3);
+    expect(message.body.data.records[2]).toEqual({
+      xpGain: 125,
+      sessionXp: 841780,
+      memberCount: 4,
+      shares: [
+        { memberIndex: 1, flag: 0 },
+        { memberIndex: 2, flag: 0 },
+        { memberIndex: 3, flag: 0 },
+      ],
+    });
   });
 
   it("decodes entity move frames with move kind", () => {
@@ -478,15 +759,47 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data).toEqual({
-      entityIndex: 1,
-      moveKind: 2,
-      name: "Local",
-      delta: -7,
-      reserved: 0,
-      state: 4,
+      records: [{ moveKind: 2, name: "Local", delta: -7, reserved: 0, state: 4 }],
     });
     expect(summarizeBinaryMessage(message)).toBe(
-      "entity_move(Local, delta=-7, kind=2, state=4)"
+      "entity_move(Local: delta=-7, kind=2, state=4)"
+    );
+  });
+
+  it("decodes moveKind=1 entity move records with an appearance block", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.entityMoveAppearance);
+
+    expect(message.body.kind).toBe("entity_move");
+    if (message.body.kind !== "entity_move") {
+      throw new Error("expected entity_move body");
+    }
+
+    expect(message.body.data.records).toHaveLength(1);
+    const [record] = message.body.data.records;
+    expect(record).toMatchObject({
+      moveKind: 1,
+      name: "NearPlayer",
+      delta: -8,
+      reserved: 0,
+      state: 3,
+    });
+    expect(record.appearance).toEqual({
+      level: 65,
+      fieldA: 2,
+      fieldB: 6,
+      looktype: 129,
+      flag: 1,
+      value: 0,
+      reserved: 0,
+      colors: [
+        { marker: 1, r: 255, g: 170, b: 0 },
+        { marker: 1, r: 0, g: 63, b: 191 },
+        { marker: 1, r: 191, g: 106, b: 63 },
+        { marker: 1, r: 109, g: 109, b: 109 },
+      ],
+    });
+    expect(summarizeBinaryMessage(message)).toBe(
+      "entity_move(NearPlayer: delta=-8, kind=1, state=3, lvl=65)"
     );
   });
 
@@ -500,21 +813,41 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data).toEqual({
-      entityIndex: 1,
-      name: "AllyA",
-      delta: -4,
-      fieldA: 0,
-      fieldB: 0,
-      state: 4,
+      records: [{ name: "AllyA", delta: -4, fieldA: 0, fieldB: 0, state: 4 }],
     });
     expect(summarizeBinaryMessage(message)).toBe(
-      "entity_position(AllyA, delta=-4, state=4)"
+      "entity_position(AllyA: delta=-4, state=4)"
     );
   });
 
-  it("decodes hunt frame variants: ground drops, item grant, and entity uuid list", () => {
-    const unsupportedTick = decodeBinaryMessage(huntTrafficFixtures.huntLootAnalyzerTick);
-    expect(unsupportedTick.body.kind).toBe("unknown");
+  it("decodes entity position frames with multiple records", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.entityPositionPair);
+
+    expect(message.body.kind).toBe("entity_position");
+    if (message.body.kind !== "entity_position") {
+      throw new Error("expected entity_position body");
+    }
+
+    expect(message.body.data).toEqual({
+      records: [
+        { name: "Ally", delta: -8, fieldA: 0, fieldB: 0, state: 2 },
+        { name: "AllyB", delta: -6, fieldA: -1, fieldB: 0, state: 2 },
+      ],
+    });
+    expect(summarizeBinaryMessage(message)).toBe(
+      "entity_position(Ally: delta=-8, state=2; AllyB: delta=-6, state=2)"
+    );
+  });
+
+  it("decodes hunt frame variants: ground drops, empty kills, item grant, and entity uuid list", () => {
+    const emptyLoot = decodeBinaryMessage(huntTrafficFixtures.huntLootAnalyzerTick);
+    expect(emptyLoot.body.kind).toBe("monster_loot");
+    if (emptyLoot.body.kind !== "monster_loot") {
+      throw new Error("expected monster_loot body");
+    }
+    expect(emptyLoot.body.data.dropCount).toBe(0);
+    expect(emptyLoot.body.data.drops).toEqual([]);
+    expect(emptyLoot.body.data.totalLootValue).toBe(9367);
 
     const drops = decodeBinaryMessage(huntTrafficFixtures.huntLootItemDrops);
     expect(drops.body.kind).toBe("monster_loot");
@@ -525,7 +858,7 @@ describe("decodeBinaryMessage", () => {
 
     // Live capture: Small Enchanted Ruby + full-charge Ice Rapier (flagsA high word = 1).
     const iceRapierLoot = decodeBinaryMessage(
-      "U0cFCgErfg0AAAAAAAIAJAAwMTlmNjEwYi1lOWQ4LTdiYmQtOTRkNy02ZTBmZmE1NjU5OGL0AAAAAgAAAAIAAAAAACQAMDE5ZjYxMGItZjIwZC03YmJkLTk0ZTEtN2E2ZjEyY2RhZmQxOgAAAAEAAAACAAEAAAAAAA=="
+      "U0cFCgErfg0AAAAAAAIAJAA4ODg4ODg4OC04ODg4LTc4ODgtODg4OC0wMDAwMDAwMDAwMDb0AAAAAgAAAAIAAAAAACQAOTk5OTk5OTktOTk5OS03OTk5LTg5OTktMDAwMDAwMDAwMDA2OgAAAAEAAAACAAEAAAAAAA=="
     );
     expect(iceRapierLoot.body.kind).toBe("monster_loot");
     if (iceRapierLoot.body.kind !== "monster_loot") {
@@ -533,7 +866,7 @@ describe("decodeBinaryMessage", () => {
     }
     expect(iceRapierLoot.body.data.drops).toEqual([
       {
-        groundUuid: "019f610b-e9d8-7bbd-94d7-6e0ffa56598b",
+        groundUuid: "88888888-8888-7888-8888-000000000006",
         itemId: 244,
         amount: 2,
         flagsA: 2,
@@ -541,7 +874,7 @@ describe("decodeBinaryMessage", () => {
         remainingUnits: 0,
       },
       {
-        groundUuid: "019f610b-f20d-7bbd-94e1-7a6f12cdafd1",
+        groundUuid: "99999999-9999-7999-8999-000000000006",
         itemId: 58,
         amount: 1,
         flagsA: 0x10002,
@@ -670,7 +1003,7 @@ describe("decodeBinaryMessage", () => {
     expect(winter.body.data).toEqual(expectedWinterCourt.vitals);
   });
 
-  it("decodes session metric and player vitals hunt frames", () => {
+  it("decodes session metric and xp summary hunt frames", () => {
     const session = decodeBinaryMessage(huntTrafficFixtures.sessionMetric);
     expect(session.body.kind).toBe("session_metric");
     if (session.body.kind !== "session_metric") {
@@ -679,13 +1012,11 @@ describe("decodeBinaryMessage", () => {
     expect(session.body.data.staminaMs).toBe(expectedSessionMetric.staminaMs);
 
     const player = decodeBinaryMessage(huntTrafficFixtures.playerUpdate);
-    expect(player.body.kind).toBe("player_update");
-    if (player.body.kind !== "player_update") {
-      throw new Error("expected player_update body");
+    expect(player.body.kind).toBe("xp_summary");
+    if (player.body.kind !== "xp_summary") {
+      throw new Error("expected xp_summary body");
     }
-    expect(player.body.data.currentMana).toBe(expectedPlayerVitals.currentMana);
-    expect(player.body.data.currentHp).toBe(expectedPlayerVitals.currentHp);
-    expect(player.body.data.huntTimeMs).toBe(expectedPlayerVitals.huntTimeMs);
+    expect(player.body.data).toEqual(expectedXpSummaryReconnect);
   });
 
   it("decodes hunt analyzer snapshot personal and party sections", () => {
@@ -714,28 +1045,40 @@ describe("decodeBinaryMessage", () => {
     });
 
     expect(message.body.data.partyMembers.map((member) => member.name)).toEqual([
-      "Partner",
       "Delta",
       "Guild",
       "Member Primary",
+      "Partner",
     ]);
 
-    expect(message.body.data.partyMembers[0]).toMatchObject({
+    expect(message.body.data.partyLeaderTotals).toMatchObject({
       name: "Partner",
       lootTotalValue: 1_818_866,
       suppliesGold: 1_227_346,
       profitGold: 591_520,
-      balanceGold: 147_880,
+      profitPerMember: 147_880,
+      remainderGold: 0,
     });
 
-    expect(message.body.data.partyMembers[1]).toMatchObject({
+    expect(message.body.data.partyMembers[0]).toMatchObject({
       name: "Delta",
+      isLeaderRow: false,
       lootTotalValue: 1_452_050,
       suppliesGold: 344_574,
       profitGold: 1_107_476,
+      transferGold: -959_596,
+      receiveGold: 0,
+      payGold: 959_596,
     });
 
-    expect(message.body.data.partyLeaderTotals?.name).toBe("Partner");
+    expect(message.body.data.partyMembers[3]).toMatchObject({
+      name: "Partner",
+      isLeaderRow: true,
+      lootTotalValue: 366_816,
+      suppliesGold: 206_196,
+      profitGold: 160_620,
+      transferGold: -12_740,
+    });
     expect(summarizeBinaryMessage(message)).toBe(
       "hunt_analyzer(kills=1533, rawXp=376368, xp=277516, party=4)"
     );
@@ -861,16 +1204,16 @@ describe("gold balance (type 0x0d)", () => {
 });
 
 describe("binary packet tails", () => {
-  it("fully decodes inventory, market, spell, and auto-attack payloads without trailing bytes", () => {
+  it("fully decodes inventory, spell, and auto-attack payloads without trailing bytes", () => {
     const samples = [
       binaryFixtures.inventorySnapshotDuringHunt,
-      binaryMarketSnapshotBrowse,
       binaryFixtures.spellDivineCaldera,
       binaryFixtures.autoAttackElvishBow,
     ];
 
     for (const sample of samples) {
       const message = decodeBinaryMessage(sample);
+      expect(message.body.kind).not.toBe("unknown");
       const serialized = JSON.stringify(message.body);
       expect(serialized).not.toContain('"__bytes"');
     }
@@ -922,7 +1265,7 @@ describe("ground_item_update", () => {
     if (winter.body.kind !== "ground_item_update") {
       throw new Error("expected ground_item_update");
     }
-    expect(winter.body.data.entityRef.hex).toBe(expectedWinterCourt.groundItemUpdate.entityRef);
+    expect(winter.body.data.entityRef?.hex).toBe(expectedWinterCourt.groundItemUpdate.entityRef);
     expect(winter.body.data.subType).toBe(expectedWinterCourt.groundItemUpdate.subType);
     expect(winter.body.data.count).toBe(expectedWinterCourt.groundItemUpdate.count);
     expect(winter.body.data.extra).toBe(expectedWinterCourt.groundItemUpdate.extra);
@@ -938,6 +1281,23 @@ describe("ground_item_update", () => {
     expect(short.body.data.count).toBe(1);
     expect(short.body.data.extra).toBe(11000);
     expect(short.body.data.items).toBeUndefined();
+  });
+
+  it("decodes compact short tile updates with a shorter appearance block", () => {
+    const compact = decodeBinaryMessage(winterCourtTrafficFixtures.groundItemUpdateCompactTile);
+    expect(compact.body.kind).toBe("ground_item_update");
+    if (compact.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+
+    const expected = expectedWinterCourt.groundItemUpdateCompactTile;
+    expect(compact.body.data.entityRef?.hex).toBe(expected.entityRef);
+    expect(compact.body.data.subType).toBe(expected.subType);
+    expect(compact.body.data.count).toBe(expected.count);
+    expect(compact.body.data.appearance).toHaveLength(expected.appearanceLength);
+    expect(compact.body.data.extra).toBe(expected.extra);
+    expect(compact.body.data.items).toBeUndefined();
+    expect(summarizeBinaryMessage(compact)).toContain("extra=11000");
   });
 
   it("decodes inventory slot deltas from long ground_item frames", () => {
@@ -958,5 +1318,167 @@ describe("ground_item_update", () => {
     );
     expect(summarizeBinaryMessage(message)).toContain("items=2");
     expect(summarizeBinaryMessage(message)).toContain("125x1");
+  });
+
+  it("decodes zero-prefixed ref/value list frames without entityRef", () => {
+    const single = decodeBinaryMessage(huntTrafficFixtures.groundItemRefValueSingle);
+    expect(single.body.kind).toBe("ground_item_update");
+    if (single.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(single.body.data).toEqual({
+      subType: 0,
+      count: 1,
+      refValues: [{ ref: 104, value: 688 }],
+    });
+    expect(summarizeBinaryMessage(single)).toBe(
+      "ground_item(sub=0, count=1, refs=[104=688])"
+    );
+
+    const pair = decodeBinaryMessage(huntTrafficFixtures.groundItemRefValuePair);
+    expect(pair.body.kind).toBe("ground_item_update");
+    if (pair.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(pair.body.data.refValues).toEqual([
+      { ref: 115, value: 1786 },
+      { ref: 118, value: 2106 },
+    ]);
+
+    const withFlag = decodeBinaryMessage(huntTrafficFixtures.groundItemRefValueWithFlag);
+    expect(withFlag.body.kind).toBe("ground_item_update");
+    if (withFlag.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(withFlag.body.data.refValues).toEqual([{ ref: 1148, value: 2008 }]);
+    expect(withFlag.body.data.refFlags).toEqual([{ ref: 1149, flag: 1 }]);
+    expect(summarizeBinaryMessage(withFlag)).toBe(
+      "ground_item(sub=0, count=1, refs=[1148=2008], flags=[1149:1])"
+    );
+  });
+
+  it("decodes count=0 ref list frames that carry only flags", () => {
+    const flags3 = decodeBinaryMessage(huntTrafficFixtures.groundItemRefFlags3);
+    expect(flags3.body.kind).toBe("ground_item_update");
+    if (flags3.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(flags3.body.data).toEqual({
+      subType: 0,
+      count: 0,
+      refFlags: [
+        { ref: 1644, flag: 0 },
+        { ref: 1641, flag: 0 },
+        { ref: 1643, flag: 0 },
+      ],
+    });
+    expect(summarizeBinaryMessage(flags3)).toBe(
+      "ground_item(sub=0, count=0, flags=[1644:0, 1641:0, 1643:0])"
+    );
+
+    const flags4 = decodeBinaryMessage(huntTrafficFixtures.groundItemRefFlags4);
+    expect(flags4.body.kind).toBe("ground_item_update");
+    if (flags4.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+    expect(flags4.body.data.refFlags).toEqual([
+      { ref: 1711, flag: 0 },
+      { ref: 1712, flag: 0 },
+      { ref: 1710, flag: 0 },
+      { ref: 1707, flag: 0 },
+    ]);
+  });
+
+  it("decodes 9-byte drop notify frames without entityRef", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.groundItemDropNotify);
+    expect(message.body.kind).toBe("ground_item_update");
+    if (message.body.kind !== "ground_item_update") {
+      throw new Error("expected ground_item_update");
+    }
+
+    const expected = expectedWinterCourt.groundItemDropNotify;
+    expect(message.body.data.entityRef).toBeUndefined();
+    expect(message.body.data.count).toBe(expected.amount);
+    expect(message.body.data.item?.itemId).toBe(expected.itemId);
+    expect(message.body.data.item?.amount).toBe(expected.amount);
+    expect(summarizeBinaryMessage(message)).toContain("867x1");
+  });
+});
+
+describe("hunt_entity_spawn", () => {
+  it("decodes live monsters and corpses", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.huntEntitySpawnLiveAndCorpses);
+    expect(message.body.kind).toBe("hunt_entity_spawn");
+    if (message.body.kind !== "hunt_entity_spawn") {
+      throw new Error("expected hunt_entity_spawn");
+    }
+
+    const expected = expectedWinterCourt.huntEntitySpawnLiveAndCorpses;
+    const { entities, corpses, tiles, rawTail } = message.body.data;
+    expect(entities).toHaveLength(expected.entityCount);
+    expect(corpses).toHaveLength(expected.corpseCount);
+    // Empty third section is u16 tileCount=0 (+ optional zero pad), not tail drift.
+    expect(tiles).toEqual([]);
+    expect(rawTail.length).toBe(0);
+
+    const first = entities[0]!;
+    expect(first.runtimeIndex).toBe(expected.first.runtimeIndex);
+    expect(first.uuid).toBe(expected.first.uuid);
+    expect(first.monsterId).toBe(expected.first.monsterId);
+    expect(first.currentHp).toBe(expected.first.currentHp);
+    expect(first.maxHp).toBe(expected.first.maxHp);
+    expect(first.dx).toBe(expected.first.dx);
+    expect(first.dy).toBe(expected.first.dy);
+    expect(first.direction).toBe(expected.first.direction);
+
+    expect(corpses.map((c) => ({ monsterId: c.monsterId, corpseId: c.corpseId, dx: c.dx, dy: c.dy }))).toEqual(
+      expected.corpses
+    );
+    expect(summarizeBinaryMessage(message)).toBe("hunt_spawn(6 entities, 2 corpses)");
+  });
+
+  it("decodes corpse-only spawn frames with a nearby tile neighbourhood", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.huntEntitySpawnFailed);
+    expect(message.body.kind).toBe("hunt_entity_spawn");
+    if (message.body.kind !== "hunt_entity_spawn") {
+      throw new Error("expected hunt_entity_spawn");
+    }
+
+    const expected = expectedWinterCourt.huntEntitySpawnCorpsesOnly;
+    expect(message.body.data.entities).toHaveLength(expected.entityCount);
+    expect(message.body.data.corpses).toHaveLength(expected.corpseCount);
+    expect(message.body.data.corpses.map((c) => ({ monsterId: c.monsterId, corpseId: c.corpseId }))).toEqual(
+      expected.corpses
+    );
+    expect(message.body.data.tiles).toEqual(expected.tiles);
+    expect(message.body.data.tileFooter?.flag).toBe(expected.tileFooter.flag);
+    expect(message.body.data.tileFooter?.extra).toBe(expected.tileFooter.extra);
+    expect(message.body.data.rawTail.length).toBe(0);
+    expect(summarizeBinaryMessage(message)).toBe("hunt_spawn(0 entities, 4 corpses, 8 tiles)");
+  });
+
+  it("decodes 7-corpse spawn frames with a 7-tile neighbourhood footer", () => {
+    const message = decodeBinaryMessage(winterCourtTrafficFixtures.huntEntitySpawnCorpsesAndTiles);
+    expect(message.body.kind).toBe("hunt_entity_spawn");
+    if (message.body.kind !== "hunt_entity_spawn") {
+      throw new Error("expected hunt_entity_spawn");
+    }
+
+    const expected = expectedWinterCourt.huntEntitySpawnCorpsesAndTiles;
+    expect(message.body.data.entities).toHaveLength(expected.entityCount);
+    expect(message.body.data.corpses).toHaveLength(expected.corpseCount);
+    expect(
+      message.body.data.corpses.map((c) => ({
+        monsterId: c.monsterId,
+        corpseId: c.corpseId,
+        dx: c.dx,
+        dy: c.dy,
+      }))
+    ).toEqual(expected.corpses);
+    expect(message.body.data.tiles).toEqual(expected.tiles);
+    expect(message.body.data.tileFooter?.flag).toBe(expected.tileFooter.flag);
+    expect(message.body.data.tileFooter?.extra).toBe(expected.tileFooter.extra);
+    expect(message.body.data.rawTail.length).toBe(0);
+    expect(summarizeBinaryMessage(message)).toBe("hunt_spawn(0 entities, 7 corpses, 7 tiles)");
   });
 });

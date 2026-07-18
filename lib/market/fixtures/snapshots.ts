@@ -8,7 +8,7 @@ export const sampleMarketSnapshotBrowse: MarketSnapshotData = {
   selectedItemTradableAmount: 0,
   sellOrders: [
     {
-      id: "3d942825-1a56-4e55-9d5f-d72ab37b5fdc",
+      id: "88888888-8888-4888-8888-000000000009",
       itemId: 1346,
       tier: 0,
       isOwnOrder: false,
@@ -19,7 +19,7 @@ export const sampleMarketSnapshotBrowse: MarketSnapshotData = {
       createdAt: "2026-07-07T14:47:44.880Z",
     },
     {
-      id: "9f95203d-115a-46e7-9209-8491d941b9a3",
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-00000000000b",
       itemId: 1251,
       tier: 0,
       isOwnOrder: false,

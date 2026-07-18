@@ -1,5 +1,10 @@
 import { hasAllBlessings, nextAffordableBlessing } from "../../domain/bless";
-import { canAutoHuntClaimIdle } from "../../domain/hunt/guards";
+import {
+  canAutoHuntClaimIdle,
+  isPostHuntLootBlocking,
+  shouldDeferHuntRestartForLootFinish,
+} from "../../domain/hunt/guards";
+import { isLootSellEnabled } from "../../domain/loot-sell";
 import { areAllPartyMembersOnline } from "../../domain/party/online";
 import { isStartableHuntId } from "../../hunts";
 import { featureCooldown, LONG_COOLDOWN, BURST_COOLDOWN, delay } from "../commands/cooldown";
@@ -15,6 +20,7 @@ import { requestBlessSnapshot } from "../readiness";
 import type { GameEvent } from "../events/types";
 import {
   canRunIdleAutomation,
+  isHandlingLoot,
   isPlayerIdling,
   updatePlayerState,
 } from "../player-state";
@@ -31,6 +37,7 @@ import type { SessionState } from "./states/session.state";
 import type { BlessState } from "./states/bless.state";
 import type { BattleService } from "./battle.service";
 import type { HuntService } from "./hunt.service";
+import type { LootService } from "./loot.service";
 
 export const DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC = 5;
 
@@ -185,6 +192,16 @@ export class ToolsService extends Service {
       if (event.playerState === "idling" && this.pendingReadyCheckId) {
         // Confirm is deferred off this dispatch so the PARTY_SNAPSHOT ack can land.
         this.ctx.session.deferFromWire(() => this.tryFulfillPendingReadyCheck());
+      }
+      return;
+    }
+
+    // Same resume point as auto-hunt / tasker: only after sell/split returns to idle.
+    if (event.kind === "loot_pipeline_finished") {
+      if (this.ctx.settings.get().autoTrainingEnabled) {
+        this.scheduleAutoTrainingCheck(this.resolveAutoTrainingIdleDelayMs(), {
+          restart: true,
+        });
       }
       return;
     }
@@ -827,6 +844,12 @@ export class ToolsService extends Service {
           return;
         }
 
+        if (this.isLootBlockingTraining()) {
+          this.cancelAutoTrainingCheck();
+          trace.finish("skipped", { result: "defer_for_loot" });
+          return;
+        }
+
         if (
           this.hasActionablePartyInvite(data) ||
           this.hasActivePartyReadyCheck(data) ||
@@ -847,6 +870,17 @@ export class ToolsService extends Service {
           restart: false,
         });
         trace.finish("ok", { result: "ensure_idle_timer" });
+        return;
+      }
+
+      // Post-hunt sell/split owns the idle transition — wait for loot_pipeline_finished.
+      if (
+        isJsonEvent(event, ReceiveMessageTypes.HUNT_FINISHED) &&
+        this.shouldDeferTrainingForLootFinish()
+      ) {
+        this.cancelAutoTrainingCheck();
+        this.setFlowPhase("idle", { startedAt: null });
+        trace.finish("skipped", { result: "defer_for_loot" });
         return;
       }
 
@@ -928,10 +962,44 @@ export class ToolsService extends Service {
     });
   }
 
+  /** True while post-hunt sell/split owns the idle transition (mirrors hunt restart). */
+  private isLootBlockingTraining(): boolean {
+    const loot = this.ctx.session.services.tryGet<LootService>("loot");
+    return isPostHuntLootBlocking({
+      playerHandlingLoot: isHandlingLoot(this.ctx.session),
+      lootFlowBusy: loot?.isBusyWithPostHuntLoot() === true,
+    });
+  }
+
+  /**
+   * On HUNT_FINISHED, defer auto-training when loot sell/split will run —
+   * same race guard as auto-hunt restart / tasker advance.
+   */
+  private shouldDeferTrainingForLootFinish(): boolean {
+    if (this.isLootBlockingTraining()) {
+      return true;
+    }
+    const settings = this.ctx.settings.get();
+    const lootMasterOn = this.ctx.isMasterEnabled("loot");
+    return shouldDeferHuntRestartForLootFinish(
+      lootMasterOn
+        ? settings
+        : { ...settings, autoSplitLootOnHuntFinished: false },
+      {
+        isLeader: isPartyLeader(this.identity()),
+        lootSellEnabled: lootMasterOn && isLootSellEnabled(settings),
+      }
+    );
+  }
+
   private hasPendingPostHuntWork(): boolean {
     const session = this.ctx.session;
 
     if (session.settings.autoTaskerEnabled) {
+      return true;
+    }
+
+    if (this.isLootBlockingTraining()) {
       return true;
     }
 

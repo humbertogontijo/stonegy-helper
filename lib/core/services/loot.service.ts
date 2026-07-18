@@ -272,6 +272,12 @@ export class LootService extends Service {
       !isLootSellEnabled(settings) &&
       settings.autoSplitLootOnHuntFinished
     ) {
+      // Claim ownership synchronously so auto-training / hunt restart cannot race
+      // the deferred beforeSplit delay.
+      if (!isHandlingLoot(this.ctx.session) && this.flow.phase === "idle") {
+        this.setFlowPhase("splitting", { startedAt: Date.now(), lastError: null });
+        updatePlayerState(this.ctx.session, "selling_loot", "Preparing loot split…");
+      }
       this.ctx.session.deferFromWire(() => this.handleLootSplitAfterSell(event));
     }
   }
@@ -775,9 +781,13 @@ export class LootService extends Service {
       }
 
       if (isHuntFinished && isHandlingLoot(session)) {
-        trace.guard("not_handling_loot", false);
-        trace.finish("skipped");
-        return;
+        // Our sync claim sets selling_loot + splitting phase before deferring; allow it.
+        const ownClaim = this.flow.phase === "splitting";
+        trace.guard("not_handling_loot", ownClaim, ownClaim ? undefined : "blocked");
+        if (!ownClaim) {
+          trace.finish("skipped");
+          return;
+        }
       }
 
       if (event.kind === "loot_sell_finished" && isSplittingLoot(session)) {

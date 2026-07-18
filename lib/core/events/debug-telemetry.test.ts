@@ -451,6 +451,11 @@ describe("message payload schemas", () => {
       }).status
     ).toBe("valid");
     expect(
+      validateMessagePayload("equip_item", "send", {
+        inventoryId: "33333333-3333-7333-8333-000000000004",
+      }).status
+    ).toBe("valid");
+    expect(
       validateMessagePayload("depot:patch", "receive", {
         boxIndex: 0,
         upserts: [
@@ -953,10 +958,46 @@ describe("debug-telemetry", () => {
       snapshot
     );
 
+    const expectedKey = `binary:unknown:0x${StonegyBinaryMessageType.HuntAnalyzerSnapshot.toString(16).padStart(2, "0")}`;
     expect(snapshot.unknownEvents).toHaveLength(1);
-    expect(snapshot.events[0]?.eventKey).toBe("binary:unknown");
+    expect(snapshot.events[0]?.eventKey).toBe(expectedKey);
     expect(snapshot.events[0]?.unknownType).toBe(true);
     expect(snapshot.events[0]?.binaryType).toBe(StonegyBinaryMessageType.HuntAnalyzerSnapshot);
+  });
+
+  it("keeps distinct unknown binary envelope types", () => {
+    const snapshot = emptyDebugTelemetry();
+    const frames = [
+      StonegyBinaryMessageType.HuntAnalyzerSnapshot,
+      0xfe,
+      0xfd,
+    ].map((type) =>
+      encodeBytesToBase64(new Uint8Array([0x53, 0x47, STONEGY_BINARY_VERSION, type, 1, 2, 3]))
+    );
+
+    for (const data of frames) {
+      recordDebugWireMessage({ direction: "receive", opcode: 2, data }, snapshot);
+    }
+    // Flood the first type — should not flush the others out of unknownEvents / lastByType.
+    for (let i = 0; i < 20; i += 1) {
+      recordDebugWireMessage({ direction: "receive", opcode: 2, data: frames[0]! }, snapshot);
+    }
+
+    const unknownKeys = snapshot.unknownEvents
+      .filter((event) => event.direction === "receive")
+      .map((event) => event.eventKey)
+      .sort();
+    expect(unknownKeys).toEqual([
+      "binary:unknown:0xfd",
+      "binary:unknown:0xfe",
+      `binary:unknown:0x${StonegyBinaryMessageType.HuntAnalyzerSnapshot.toString(16).padStart(2, "0")}`,
+    ].sort());
+    expect(
+      snapshot.lastByType[lastByTypeKey("binary:unknown:0xfe", "receive")]?.unknownType
+    ).toBe(true);
+    expect(
+      snapshot.lastByType[lastByTypeKey("binary:unknown:0xfd", "receive")]?.unknownType
+    ).toBe(true);
   });
 
   it("stores full wire payloads while keeping previews truncated", () => {
@@ -996,7 +1037,7 @@ describe("debug-telemetry", () => {
     expect(snapshot.lastByType[lastByTypeKey("binary:ping", "receive")]).toBeTruthy();
   });
 
-  it("records market binary snapshots", () => {
+  it("records market binary snapshots with unmapped trailers as unknown", () => {
     const snapshot = emptyDebugTelemetry();
 
     recordDebugWireMessage(
@@ -1008,7 +1049,11 @@ describe("debug-telemetry", () => {
       snapshot
     );
 
+    expect(snapshot.events[0]?.eventKey).toBe("binary:market_snapshot");
     expect(snapshot.events[0]?.summary).toContain("market(");
+    expect(snapshot.events[0]?.unknownType).toBe(true);
+    expect(snapshot.events[0]?.trailingBytes).toBeGreaterThan(0);
+    expect(snapshot.unknownEvents).toHaveLength(1);
     expect(snapshot.events[0]?.parsed).toBeTruthy();
   });
 

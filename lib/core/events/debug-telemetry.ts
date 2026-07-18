@@ -387,6 +387,10 @@ function recordJsonWire(
   });
 }
 
+function binaryUnknownEventKey(binaryType: number): string {
+  return `binary:unknown:0x${binaryType.toString(16).padStart(2, "0")}`;
+}
+
 function recordBinaryWire(
   wire: WireMessage,
   snapshot: DebugTelemetrySnapshot,
@@ -394,9 +398,17 @@ function recordBinaryWire(
 ): void {
   try {
     const decoded = decodeBinaryMessage(wire.data);
-    const eventKey = `binary:${decoded.body.kind}`;
     const trailingBytes = countTrailingBytes(decoded.body);
-    const unknownType = decoded.body.kind === "unknown";
+    // Trailing/rawTail bytes mean the decode is incomplete — treat as unknown
+    // even when a partial structured body was produced.
+    const unknownType =
+      decoded.body.kind === "unknown" || Boolean(trailingBytes);
+    // Include envelope type so distinct unknown opcodes do not overwrite each other
+    // in lastByType / unknownEvents (both keyed by eventKey+direction).
+    const eventKey =
+      decoded.body.kind === "unknown"
+        ? binaryUnknownEventKey(decoded.envelope.type)
+        : `binary:${decoded.body.kind}`;
 
     appendDebugRecord(snapshot, {
       id: nextDebugEventId(),

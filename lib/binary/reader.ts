@@ -30,14 +30,14 @@ export class BinaryReader {
     this.offset = position;
   }
 
-  skip(bytes: number) {
-    if (bytes < 0) {
-      throw new RangeError(`Cannot skip negative byte count: ${bytes}`);
-    }
-    this.offset += bytes;
-    if (this.offset > this.buffer.length) {
-      throw new RangeError(`Read past end of buffer at offset ${this.offset}`);
-    }
+  /**
+   * Intentionally unavailable: skipping unmapped bytes hides incomplete decodes.
+   * Use typed reads (`u8`/`bytes`/`consumeZeroPad`) for known layout, or throw.
+   */
+  skip(bytes: number): never {
+    throw new RangeError(
+      `BinaryReader.skip(${bytes}) is not allowed; unmapped bytes must fail the decode`
+    );
   }
 
   u8() {
@@ -107,6 +107,18 @@ export class BinaryReader {
     return value > 0x7f ? value - 0x100 : value;
   }
 
+  /** Little-endian IEEE-754 float32. */
+  f32() {
+    this.ensureAvailable(4);
+    const value = new DataView(
+      this.buffer.buffer,
+      this.buffer.byteOffset + this.offset,
+      4
+    ).getFloat32(0, true);
+    this.offset += 4;
+    return value;
+  }
+
   i32() {
     return this.u32() | 0;
   }
@@ -163,6 +175,42 @@ export class BinaryReader {
 
   rest() {
     return this.bytes(this.remaining);
+  }
+
+  /**
+   * Consume `length` bytes that must all be zero (known frame terminator/padding).
+   * Non-zero bytes are unexpected trailing payload — callers should not ignore them.
+   */
+  consumeZeroPad(length: number): void {
+    const start = this.offset;
+    const pad = this.bytes(length);
+    for (let index = 0; index < pad.length; index += 1) {
+      if (pad[index] !== 0) {
+        throw new RangeError(
+          `Expected ${length}-byte zero pad at offset ${start}, found non-zero byte`
+        );
+      }
+    }
+  }
+
+  /**
+   * If every remaining byte is zero, consume them as known padding.
+   * Leaves non-zero leftovers untouched so {@link assertExhausted} can fail the frame.
+   */
+  consumeTrailingZeroPad(): void {
+    if (this.remaining === 0) {
+      return;
+    }
+    const pending = this.slice(this.offset);
+    if (pending.every((byte) => byte === 0)) {
+      this.consumeZeroPad(pending.length);
+    }
+  }
+
+  assertExhausted(label: string): void {
+    if (this.remaining > 0) {
+      throw new RangeError(`${label} has ${this.remaining} unparsed trailing bytes`);
+    }
   }
 
   private ensureAvailable(length: number) {

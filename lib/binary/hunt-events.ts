@@ -1,9 +1,15 @@
 import { BinaryReader } from "./reader.ts";
+import {
+  readInventoryItemStringAttributes,
+  remainingUnitsFromFlagsAndAttributes,
+} from "./inventory-snapshot.ts";
 import type {
   AnalyzerStatsBody,
   CombatFloatBody,
   CounterTripletBody,
   DecodedHuntFrameBody,
+  EffectAreaBody,
+  EffectAreaRecord,
   EntityRef,
   CooldownUpdateBody,
   EntityUuidListBody,
@@ -14,16 +20,19 @@ import type {
   HuntAnalyzerLootItem,
   HuntAnalyzerMonsterEntry,
   HuntAnalyzerPartyMember,
+  HuntAnalyzerPartyTotals,
   HuntAnalyzerSnapshotBody,
   HuntEntitySpawnBody,
-  HuntEntitySpawnEntry,
+  HuntEntitySpawnCorpseEntry,
+  HuntEntitySpawnLiveEntry,
+  HuntEntitySpawnTile,
+  HuntEntitySpawnTileFooter,
   ItemGrantBody,
   KillEventBody,
-  PlayerVitalsBody,
   SessionMetricBody,
-  StatusEffectBody,
   VitalsBody,
   XpGainBody,
+  XpSummaryBody,
 } from "../protocol-messages.ts";
 
 const ENTITY_UUID_STRING_LENGTH = 36;
@@ -71,7 +80,8 @@ function readLootItemFields(reader: BinaryReader): Omit<MonsterLootDropEntry, "g
 function decodeMonsterLoot(reader: BinaryReader, totalLootValue: number): MonsterLootBody {
   reader.u32();
   const dropCount = reader.u16();
-  if (dropCount <= 0 || dropCount > HUNT_FRAME_MAX_DROP_COUNT) {
+  // dropCount === 0 is a real empty-kill frame (no ground drops).
+  if (dropCount < 0 || dropCount > HUNT_FRAME_MAX_DROP_COUNT) {
     throw new RangeError(`Invalid monster loot drop count: ${dropCount}`);
   }
 
@@ -86,9 +96,7 @@ function decodeMonsterLoot(reader: BinaryReader, totalLootValue: number): Monste
   }
 
   // Captures end with a 2-byte zero pad after the last drop trailer.
-  if (reader.remaining > 0) {
-    reader.rest();
-  }
+  reader.consumeTrailingZeroPad();
 
   return { subType: 1, totalLootValue, dropCount, drops };
 }
@@ -102,14 +110,29 @@ function decodeItemGrant(reader: BinaryReader): ItemGrantBody {
   }
 
   const fields = readLootItemFields(reader);
-  if (reader.remaining > 0) {
-    reader.rest();
+
+  // Timed items (flagsA & 0x4) carry the same string-attribute block as
+  // inventory items (e.g. `timing_remaining_ms=…` on rings).
+  const attributes = readInventoryItemStringAttributes(reader, fields.flagsA);
+
+  // Trailing uuid list: u16 count + count × (u16 len + uuid). Observed with a
+  // single UUIDv7 entry — likely the source item/entity instance.
+  const relatedUuids: string[] = [];
+  if (reader.remaining >= 2) {
+    const relatedCount = reader.u16();
+    for (let index = 0; index < relatedCount; index += 1) {
+      relatedUuids.push(readEntityUuid(reader));
+    }
   }
+  reader.consumeTrailingZeroPad();
 
   return {
     subType: 0,
     groundUuid,
     ...fields,
+    remainingUnits: remainingUnitsFromFlagsAndAttributes(fields.flagsA, attributes),
+    ...(attributes.length > 0 ? { attributes } : {}),
+    ...(relatedUuids.length > 0 ? { relatedUuids } : {}),
   };
 }
 
@@ -143,7 +166,9 @@ export function decodeHuntFrame(reader: BinaryReader): DecodedHuntFrameBody {
   }
 
   if (subType === 0 && fieldA === 0) {
-    if (fieldB <= 0 || fieldB > HUNT_FRAME_MAX_ENTITY_COUNT) {
+    // Validate structurally: each uuid entry is u16 len + 36 chars = 38 bytes.
+    // (Live captures reach 136+ entries, so a fixed cap is too strict.)
+    if (fieldB <= 0 || fieldB * 38 > reader.remaining) {
       throw new RangeError(`Invalid entity uuid list count: ${fieldB}`);
     }
 
@@ -326,82 +351,9 @@ function detectHuntAnalyzerLayout(buffer: Uint8Array, start: number): HuntAnalyz
   };
 }
 
-function readPaddedI64(reader: BinaryReader): number {
-  return Number(reader.i64());
-}
-
-function skipNamePadding(reader: BinaryReader): void {
-  while (reader.remaining >= 1 && reader.bufferView[reader.position] === 0) {
-    reader.u8();
-  }
-}
-
-function skipLeaderRowMarker(reader: BinaryReader): boolean {
-  if (reader.remaining >= 1 && reader.bufferView[reader.position] === 0x01) {
-    reader.u8();
-    return true;
-  }
-
-  return false;
-}
-
 function readNameString(reader: BinaryReader): string {
   const length = reader.u16();
   return new TextDecoder().decode(reader.bytes(length));
-}
-
-function decodePartyMemberAt(buffer: Uint8Array, offset: number, firstMember: boolean): {
-  member: HuntAnalyzerPartyMember;
-  next: number;
-} {
-  const reader = new BinaryReader(buffer);
-  reader.seek(offset);
-
-  const uuidLength = reader.u16();
-  if (uuidLength !== 36) {
-    throw new RangeError(`Expected uuid length 36, got ${uuidLength}`);
-  }
-  const playerId = new TextDecoder().decode(reader.bytes(uuidLength));
-  const name = readNameString(reader);
-  skipNamePadding(reader);
-  const isSummaryRow = skipLeaderRowMarker(reader);
-
-  const lootTotalValue = readPaddedI64(reader);
-  const suppliesGold = readPaddedI64(reader);
-  const profitGold = readPaddedI64(reader);
-  const balanceGold = readPaddedI64(reader);
-
-  if (reader.remaining >= 8) {
-    reader.skip(8);
-  }
-
-  const gapStart = reader.position;
-  while (
-    reader.position < buffer.length - 1 &&
-    !(buffer[reader.position] === 0x24 && buffer[reader.position + 1] === 0)
-  ) {
-    reader.seek(reader.position + 1);
-  }
-
-  let huntTimeMs: number | undefined;
-  const gapSize = reader.position - gapStart;
-  if (!firstMember && gapSize === 8) {
-    huntTimeMs = Number(new DataView(buffer.buffer, buffer.byteOffset + gapStart, 8).getBigInt64(0, true));
-  }
-
-  return {
-    member: {
-      playerId,
-      name,
-      lootTotalValue,
-      suppliesGold,
-      profitGold,
-      balanceGold,
-      huntTimeMs,
-      isSummaryRow,
-    },
-    next: reader.position,
-  };
 }
 
 function isPlayerUuidAt(buffer: Uint8Array, offset: number): boolean {
@@ -455,55 +407,62 @@ function readHuntAnalyzerLootItems(
   return lootItems;
 }
 
-function partyLeaderTotalsFromSummaryRow(
-  partyMembers: HuntAnalyzerPartyMember[],
-  summaryRow: HuntAnalyzerPartyMember
-): HuntAnalyzerPartyMember {
-  const baseline = partyMembers.find(
-    (member) => member.playerId === summaryRow.playerId && !member.isSummaryRow
-  );
-
-  if (!baseline) {
-    return summaryRow;
-  }
-
-  return {
-    ...summaryRow,
-    lootTotalValue: baseline.lootTotalValue,
-    suppliesGold: baseline.suppliesGold,
-    profitGold: baseline.profitGold,
-    balanceGold: baseline.balanceGold,
-  };
-}
-
-function decodePartyMembersFrom(
+/**
+ * Party section of type 0x05, starting at the first player uuid. Deterministic
+ * loot-split layout (byte-exact on live/training/fresh-hunt frames):
+ *
+ *   leader totals block: uuid, name, 5 × i64 —
+ *     lootTotalValue, suppliesGold, profitGold (= loot − supplies),
+ *     profitPerMember (= profit / partySize, floored),
+ *     remainderGold (division remainder, absorbed by the leader row)
+ *   u16 memberCount
+ *   memberCount × member row: uuid, name, u8 leaderFlag, 6 × i64 —
+ *     lootTotalValue, suppliesGold, profitGold,
+ *     transferGold (= share − own profit; positive receives, negative pays),
+ *     receiveGold / payGold (transfer split into its two directions;
+ *     both zero on the leader's own row — the leader executes the split)
+ */
+function decodePartySectionFrom(
   buffer: Uint8Array,
   partyStart: number
 ): {
   partyMembers: HuntAnalyzerPartyMember[];
-  partyLeaderTotals?: HuntAnalyzerPartyMember;
+  partyLeaderTotals?: HuntAnalyzerPartyTotals;
 } {
-  const partyMembers: HuntAnalyzerPartyMember[] = [];
-  let partyLeaderTotals: HuntAnalyzerPartyMember | undefined;
-  let offset = partyStart;
-  let firstMember = true;
-
-  while (offset < buffer.length - 20) {
-    const uuidLength = buffer[offset] | (buffer[offset + 1] << 8);
-    if (uuidLength !== HUNT_ANALYZER_PLAYER_UUID_LENGTH) {
-      break;
-    }
-
-    const { member, next } = decodePartyMemberAt(buffer, offset, firstMember);
-    if (member.isSummaryRow) {
-      partyLeaderTotals = partyLeaderTotalsFromSummaryRow(partyMembers, member);
-    } else {
-      partyMembers.push(member);
-    }
-
-    offset = next;
-    firstMember = false;
+  if (!isPlayerUuidAt(buffer, partyStart)) {
+    return { partyMembers: [] };
   }
+
+  const reader = new BinaryReader(buffer);
+  reader.seek(partyStart);
+
+  const partyLeaderTotals: HuntAnalyzerPartyTotals = {
+    playerId: readNameString(reader),
+    name: readNameString(reader),
+    lootTotalValue: reader.i64Safe(),
+    suppliesGold: reader.i64Safe(),
+    profitGold: reader.i64Safe(),
+    profitPerMember: reader.i64Safe(),
+    remainderGold: reader.i64Safe(),
+  };
+
+  const memberCount = reader.u16();
+  const partyMembers: HuntAnalyzerPartyMember[] = [];
+  for (let index = 0; index < memberCount; index += 1) {
+    partyMembers.push({
+      playerId: readNameString(reader),
+      name: readNameString(reader),
+      isLeaderRow: reader.u8() === 1,
+      lootTotalValue: reader.i64Safe(),
+      suppliesGold: reader.i64Safe(),
+      profitGold: reader.i64Safe(),
+      transferGold: reader.i64Safe(),
+      receiveGold: reader.i64Safe(),
+      payGold: reader.i64Safe(),
+    });
+  }
+
+  reader.assertExhausted("hunt_analyzer_snapshot party section");
 
   return { partyMembers, partyLeaderTotals };
 }
@@ -529,8 +488,12 @@ export function decodeHuntAnalyzerSnapshot(reader: BinaryReader): HuntAnalyzerSn
   const monsterCount = reader.u16();
   const primaryMonsterId = reader.u32();
 
+  // Classic frames size the monster table by monsterCount (capped at 3 slots):
+  // fresh-hunt snapshots with monsterCount=0 omit it entirely, shifting the
+  // value block and loot table up by 24 bytes. Compact frames keep 3 slots.
+  const monsterTableSlots = layout.classic ? Math.min(monsterCount, 3) : 3;
   const monsters: HuntAnalyzerMonsterEntry[] = [];
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < monsterTableSlots; index += 1) {
     const base = start + 0x70 + index * 8;
     reader.seek(base);
     monsters.push({
@@ -545,13 +508,14 @@ export function decodeHuntAnalyzerSnapshot(reader: BinaryReader): HuntAnalyzerSn
   let suppliesGold = 0;
 
   if (layout.classic) {
-    reader.seek(start + 0x9c);
+    const valueBase = start + 0x70 + monsterTableSlots * 8;
+    reader.seek(valueBase + 0x14);
     rawXp = reader.u32();
-    reader.seek(start + 0xa4);
+    reader.seek(valueBase + 0x1c);
     lootBalanceGold = reader.i64Safe();
-    reader.seek(start + 0xb4);
+    reader.seek(valueBase + 0x2c);
     xp = reader.u32();
-    reader.seek(start + 0xbc);
+    reader.seek(valueBase + 0x34);
     suppliesGold = reader.i64Safe();
   } else {
     reader.seek(start + 0x2a);
@@ -564,8 +528,18 @@ export function decodeHuntAnalyzerSnapshot(reader: BinaryReader): HuntAnalyzerSn
     lootBalanceGold = reader.i64Safe();
   }
 
-  const lootItems = readHuntAnalyzerLootItems(buffer, start, layout, partyOffset);
-  const { partyMembers, partyLeaderTotals } = decodePartyMembersFrom(buffer, partyOffset);
+  // Classic loot offsets assume the full 3-slot monster table (0xc6/0xc8);
+  // shift them together with the value block when the table is shorter.
+  const layoutForFrame = layout.classic
+    ? {
+        ...layout,
+        lootItemCountOffset: 0x70 + monsterTableSlots * 8 + 0x3e,
+        lootItemsOffset: 0x70 + monsterTableSlots * 8 + 0x40,
+      }
+    : layout;
+
+  const lootItems = readHuntAnalyzerLootItems(buffer, start, layoutForFrame, partyOffset);
+  const { partyMembers, partyLeaderTotals } = decodePartySectionFrom(buffer, partyOffset);
 
   reader.seek(reader.length);
 
@@ -588,26 +562,39 @@ export function decodeHuntAnalyzerSnapshot(reader: BinaryReader): HuntAnalyzerSn
   };
 }
 
-/** Type 0x0b: u8 subType, u16 fieldA, u16 fieldB, then u32 metric words. */
+/**
+ * Type 0x0b: u8 subType (bitfield) + u8 pad, then blocks selected by subType:
+ *   bits 0x06 → totals: u64 valueA, u32 valueB, u64 valueC, u64 valueD, f32 ratio
+ *   bit  0x08 → gauge: u16 field bitmask, one f32 ratio per set bit
+ * Observed subTypes 6, 8, 14 all consume their payloads exactly under this
+ * grammar (14 carries both blocks). Ratios look like percentages (13–96).
+ */
 export function decodeAnalyzerStats(reader: BinaryReader): AnalyzerStatsBody {
   const subType = reader.u8();
-  const fieldA = reader.u16();
-  const fieldB = reader.u16();
-  const values: number[] = [];
+  reader.consumeZeroPad(1);
 
-  while (reader.remaining > 4) {
-    values.push(reader.u32());
+  const body: AnalyzerStatsBody = { subType };
+
+  if ((subType & 0x06) !== 0) {
+    body.totals = {
+      valueA: reader.u64Safe(),
+      valueB: reader.u32(),
+      valueC: reader.u64Safe(),
+      valueD: reader.u64Safe(),
+      ratio: reader.f32(),
+    };
   }
 
-  if (reader.remaining === 4) {
-    values.push(reader.u32());
-  } else if (reader.remaining === 2) {
-    reader.u16();
-  } else if (reader.remaining > 0) {
-    reader.bytes(reader.remaining);
+  if ((subType & 0x08) !== 0) {
+    const field = reader.u16();
+    const ratios: number[] = [];
+    for (let mask = field; mask !== 0; mask &= mask - 1) {
+      ratios.push(reader.f32());
+    }
+    body.gauge = { field, ratios };
   }
 
-  return { subType, fieldA, fieldB, values };
+  return body;
 }
 
 export function decodeSessionMetric(reader: BinaryReader): SessionMetricBody {
@@ -615,164 +602,184 @@ export function decodeSessionMetric(reader: BinaryReader): SessionMetricBody {
   const byteB = reader.u16();
   const staminaMs = reader.u32();
   const field = reader.u32();
-  if (reader.remaining > 0) {
-    reader.u8();
-  }
+  // Some captures append a single zero reserved byte.
+  reader.consumeTrailingZeroPad();
 
   return { byteA, byteB, staminaMs, field };
 }
 
-export function decodeXpGain(reader: BinaryReader): XpGainBody {
-  const kind = reader.u32();
-  const xpGain = reader.u32();
-  const sessionXp = reader.u32();
-
-  if (reader.remaining > 0) {
-    reader.u16();
-    const entryCount = reader.u8();
-    if (entryCount > 0 && reader.remaining >= entryCount * 2) {
-      reader.bytes(entryCount * 2);
-    }
-  }
-
-  return { kind, xpGain, sessionXp };
-}
-
 /**
- * Player update (0x14) — 61-byte hunt reconnect layout.
- * Longer payloads use a separate extended layout until fully mapped.
+ * Type 0x15 — one xp record:
+ *   u32 xpGain, u64 sessionXp, u16 memberCount,
+ *   u8 shareCount, shareCount × { u8 memberIndex, u8 flag }
+ * `sessionXp` accumulates per xp source across the session; `memberCount`
+ * is ≥ shares.length (party size the record applies to). Flag semantics
+ * unconfirmed (0/1 per member).
  */
-export function decodePlayerVitals(reader: BinaryReader, payloadLength = reader.remaining): PlayerVitalsBody {
-  if (payloadLength === 107) {
-    return decodeExtendedPlayerVitals(reader);
+export function decodeXpGain(reader: BinaryReader): XpGainBody {
+  const xpGain = reader.u32();
+  const sessionXp = reader.u64Safe();
+  const memberCount = reader.u16();
+  const shareCount = reader.u8();
+  const shares: XpGainBody["shares"] = [];
+
+  for (let index = 0; index < shareCount; index += 1) {
+    shares.push({ memberIndex: reader.u8(), flag: reader.u8() });
   }
 
-  const start = reader.position;
-  reader.u32();
-  reader.u16();
-  reader.u16();
-  reader.u32();
-  reader.u32();
-  reader.u16();
-  reader.u16();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  const currentMana = reader.u32();
-  const huntTimeMs = reader.u32();
-  reader.u32();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  reader.u32();
-  const currentHp = reader.u32();
-  reader.u32();
-  reader.u32();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-  reader.u8();
-
-  return {
-    currentHp,
-    currentMana,
-    huntTimeMs,
-    raw: reader.bufferView.slice(start, reader.position),
-  };
-}
-
-function decodeExtendedPlayerVitals(reader: BinaryReader): PlayerVitalsBody {
-  const raw = reader.bytes(reader.remaining);
-
-  return {
-    currentHp: readU32At(raw, 44),
-    currentMana: readU32At(raw, 24),
-    huntTimeMs: readU32At(raw, 10),
-    raw,
-  };
+  return { xpGain, sessionXp, memberCount, shares };
 }
 
 /**
- * Hunt entity spawn (0x02):
- *   u16 declaredEntityCount, u16 huntId
- *   first entry: u16 uuidLen, uuid, u32 value, u32 extra
- *   further entries (marker 0x01): u8 marker, u8 fieldB, u32 fieldC, u32 fieldD,
- *     8-byte entityRef, u16 payloadLen, payload, u32 value, u32 extra
- *   trailing u32 flag words and a final u8
+ * Type 0x14 (formerly misread as fixed-offset "player vitals") — xp record
+ * batch on hunt bootstrap/reconnect:
+ *   u32 xpGain (matches one record's xpGain), u16 recordCount,
+ *   recordCount × type-0x15 record
+ * Verified byte-exact against the historical 61/107-byte captures and live
+ * 103-byte frames.
+ */
+export function decodeXpSummary(reader: BinaryReader): XpSummaryBody {
+  const xpGain = reader.u32();
+  const recordCount = reader.u16();
+  const records: XpGainBody[] = [];
+
+  for (let index = 0; index < recordCount; index += 1) {
+    records.push(decodeXpGain(reader));
+  }
+
+  return { xpGain, records };
+}
+
+/** Tile footer after a non-empty nearby-tile list: flag + related ref + extra. */
+const HUNT_SPAWN_TILE_FOOTER_SIZE = 13;
+
+/**
+ * Hunt entity spawn (0x02) — live monsters + nearby corpses + tile neighbourhood:
+ *   u16 liveCount
+ *   liveCount × {
+ *     u8  marker,
+ *     u32 runtimeIndex,
+ *     u16 uuidLen(36) + uuid,
+ *     u32 monsterId, u32 currentHp, u32 maxHp,
+ *     i32 dx, i32 dy, u8 direction,
+ *     u64 spawnedAt (unix ms; matches UUIDv7 timestamp)
+ *   }
+ *   u16 corpseCount
+ *   corpseCount × {
+ *     u16 uuidLen(36) + uuid,
+ *     u32 monsterId, u32 corpseId,
+ *     u8 flagA, u8 flagB,
+ *     i32 dx, i32 dy,
+ *     u64 timestamp (unix ms)
+ *   }
+ *   u16 tileCount
+ *   tileCount × { i32 dx, i32 dy }
+ *   when tileCount > 0:
+ *     u8  flag,
+ *     relatedEntityRef (8),
+ *     u32 extra (often duration ms, e.g. 11000/12000)
+ *   remaining all-zero pad (consumed) or rawTail (unmapped; treated as unknown)
  */
 export function decodeHuntEntitySpawn(reader: BinaryReader): HuntEntitySpawnBody {
-  const entityCount = reader.u16();
-  const huntId = reader.u16();
-  const lureId = 0;
-  const entities: HuntEntitySpawnEntry[] = [];
+  const liveCount = reader.u16();
+  if (liveCount > HUNT_FRAME_MAX_ENTITY_COUNT) {
+    throw new RangeError(`Invalid hunt entity spawn live count: ${liveCount}`);
+  }
 
-  const firstUuidLen = reader.u16();
-  const firstUuid = new TextDecoder().decode(reader.bytes(firstUuidLen));
-  entities.push({
-    marker: 0,
-    uuid: firstUuid,
-    value: reader.u32(),
-  });
-  reader.u32();
-
-  for (let index = 0; index < huntId - 1; index += 1) {
+  const entities: HuntEntitySpawnLiveEntry[] = [];
+  for (let index = 0; index < liveCount; index += 1) {
     const marker = reader.u8();
-    const fieldB = reader.u8();
-    const fieldC = reader.u32();
-    const fieldD = reader.u32();
-    reader.bytes(8);
-    const payloadLen = reader.u16();
-    const payload = reader.bytes(payloadLen);
-    const uuid =
-      payloadLen === ENTITY_UUID_STRING_LENGTH
-        ? new TextDecoder().decode(payload)
-        : "";
-    const value = reader.u32();
-    reader.u32();
+    const runtimeIndex = reader.u32();
+    const uuid = readEntityUuid(reader);
     entities.push({
       marker,
+      runtimeIndex,
       uuid,
-      value,
-      fieldB,
-      fieldC,
-      fieldD,
-      payloadLen,
+      monsterId: reader.u32(),
+      currentHp: reader.u32(),
+      maxHp: reader.u32(),
+      dx: reader.i32(),
+      dy: reader.i32(),
+      direction: reader.u8(),
+      spawnedAt: reader.u64Safe(),
     });
   }
 
-  if (reader.remaining > 0 && reader.bufferView[reader.position] === 0x01) {
-    const marker = reader.u8();
-    const fieldB = reader.u8();
-    const fieldC = reader.u32();
-    const fieldD = reader.u32();
-    reader.bytes(8);
-    const payloadLen = reader.u16();
-    reader.bytes(payloadLen);
-    reader.u32();
-    reader.u32();
-    entities.push({
-      marker,
-      uuid: "",
-      value: 0,
-      fieldB,
-      fieldC,
-      fieldD,
-      payloadLen,
+  const corpseCount = reader.u16();
+  if (corpseCount > HUNT_FRAME_MAX_ENTITY_COUNT) {
+    throw new RangeError(`Invalid hunt entity spawn corpse count: ${corpseCount}`);
+  }
+
+  const corpses: HuntEntitySpawnCorpseEntry[] = [];
+  for (let index = 0; index < corpseCount; index += 1) {
+    const uuid = readEntityUuid(reader);
+    corpses.push({
+      uuid,
+      monsterId: reader.u32(),
+      corpseId: reader.u32(),
+      flagA: reader.u8(),
+      flagB: reader.u8(),
+      dx: reader.i32(),
+      dy: reader.i32(),
+      timestamp: reader.u64Safe(),
     });
   }
 
-  const footerFlags: number[] = [];
-  while (reader.remaining >= 4) {
-    footerFlags.push(reader.u32());
-  }
-  if (reader.remaining > 0) {
-    reader.u8();
+  const { tiles, tileFooter } = decodeHuntEntitySpawnTiles(reader);
+
+  // Empty tile section is often `u16 count=0` plus a trailing zero pad byte.
+  reader.consumeTrailingZeroPad();
+  const rawTail = reader.remaining > 0 ? reader.rest() : new Uint8Array(0);
+
+  return {
+    entities,
+    corpses,
+    tiles,
+    ...(tileFooter ? { tileFooter } : {}),
+    rawTail,
+  };
+}
+
+/**
+ * Third section: nearby tile offsets. When the count/footer layout does not fit,
+ * the reader is rewound so leftovers stay in rawTail (forward-compatible).
+ */
+function decodeHuntEntitySpawnTiles(reader: BinaryReader): {
+  tiles: HuntEntitySpawnTile[];
+  tileFooter?: HuntEntitySpawnTileFooter;
+} {
+  if (reader.remaining < 2) {
+    return { tiles: [] };
   }
 
-  return { entityCount, huntId, lureId, entities, footerFlags };
+  const mark = reader.position;
+  const tileCount = reader.u16();
+  const footerSize = tileCount > 0 ? HUNT_SPAWN_TILE_FOOTER_SIZE : 0;
+  if (
+    tileCount > HUNT_FRAME_MAX_ENTITY_COUNT ||
+    reader.remaining < tileCount * 8 + footerSize
+  ) {
+    reader.seek(mark);
+    return { tiles: [] };
+  }
+
+  const tiles: HuntEntitySpawnTile[] = [];
+  for (let index = 0; index < tileCount; index += 1) {
+    tiles.push({ dx: reader.i32(), dy: reader.i32() });
+  }
+
+  if (tileCount === 0) {
+    return { tiles };
+  }
+
+  return {
+    tiles,
+    tileFooter: {
+      flag: reader.u8(),
+      relatedEntityRef: readEntityRef(reader),
+      extra: reader.u32(),
+    },
+  };
 }
 
 export function decodeKillEvent(reader: BinaryReader): KillEventBody {
@@ -795,32 +802,90 @@ export function decodeCounterTriplet(reader: BinaryReader): CounterTripletBody {
 export function decodeGoldBalance(reader: BinaryReader): GoldBalanceBody {
   const goldCoins = reader.u32();
   // Captures are 8-byte payloads: u32 gold + 4 zero bytes.
-  if (reader.remaining >= 4) {
-    reader.u32();
-  } else if (reader.remaining > 0) {
-    reader.bytes(reader.remaining);
-  }
+  reader.consumeTrailingZeroPad();
 
   return { goldCoins };
 }
 
-export function decodeStatusEffect(reader: BinaryReader): StatusEffectBody {
-  const mode = reader.u8();
-  const targetIndex = reader.u16();
-  const effectId = reader.u16();
-  const value = reader.u32();
-  const duration = reader.u16();
-  const flags = reader.u8();
+/** Known kind bits on type 0x18 records — unknown bits fail the decode. */
+const EFFECT_AREA_KNOWN_KIND_BITS = 0x47;
 
-  return { mode, targetIndex, effectId, value, duration, flags };
+function bytesToHandleHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Type 0x18 (formerly misread as a fixed "status_effect" layout) — batched
+ * effect/AoE area records:
+ *   u16 recordCount
+ *   recordCount × {
+ *     u8 kind (bitfield), i8 centerX, i8 centerY,
+ *     u8 tileCount, tileCount × { i8 dx, i8 dy },
+ *     kind & 0x01 → sourceHandle (4 bytes),
+ *     kind & 0x06 → targetHandle (4 bytes) + i8 targetDx + i8 targetDy,
+ *     kind & 0x40 → u8 refId + f32 magnitude
+ *   }
+ * Tile lists trace spell areas (3×3 squares, radius-3 blobs); handles use the
+ * same compact 4-byte format as visual_update entityHandle. Verified
+ * byte-exact against kinds 0x00/0x01/0x07/0x41/0x47 in live captures.
+ */
+export function decodeEffectArea(reader: BinaryReader): EffectAreaBody {
+  const recordCount = reader.u16();
+  const records: EffectAreaRecord[] = [];
+
+  for (let index = 0; index < recordCount; index += 1) {
+    const kind = reader.u8();
+    if ((kind & ~EFFECT_AREA_KNOWN_KIND_BITS) !== 0) {
+      throw new RangeError(`Unknown effect area kind bits: 0x${kind.toString(16)}`);
+    }
+
+    const centerX = reader.i8();
+    const centerY = reader.i8();
+    const tileCount = reader.u8();
+    const tiles: EffectAreaRecord["tiles"] = [];
+    for (let tile = 0; tile < tileCount; tile += 1) {
+      tiles.push({ dx: reader.i8(), dy: reader.i8() });
+    }
+
+    const record: EffectAreaRecord = { kind, centerX, centerY, tiles };
+
+    if ((kind & 0x01) !== 0) {
+      record.sourceHandle = bytesToHandleHex(reader.bytes(4));
+    }
+    if ((kind & 0x06) !== 0) {
+      record.targetHandle = bytesToHandleHex(reader.bytes(4));
+      record.targetDx = reader.i8();
+      record.targetDy = reader.i8();
+    }
+    if ((kind & 0x40) !== 0) {
+      record.refId = reader.u8();
+      record.magnitude = reader.f32();
+    }
+
+    records.push(record);
+  }
+
+  return { records };
+}
+
+/** Compact drop notify: u32 reserved, u8 amount, u32 itemId (no entityRef). */
+const GROUND_ITEM_DROP_NOTIFY_SIZE = 9;
+
 export function decodeGroundItemUpdate(reader: BinaryReader): GroundItemUpdateBody {
+  if (reader.remaining === GROUND_ITEM_DROP_NOTIFY_SIZE) {
+    return decodeGroundItemDropNotify(reader);
+  }
+
+  const refList = tryDecodeGroundItemRefList(reader);
+  if (refList) {
+    return refList;
+  }
+
   const entityRef = readEntityRef(reader);
 
   // Long form embeds backpack slot updates: header (9 bytes + u8 count) + count×27-byte
-  // items, then an optional tile trailer. Short tile updates are exactly 25 bytes after
-  // the leading entityRef (subType, count, 11 appearance bytes, related entity, u32).
+  // items, then an optional tile trailer. Short tile updates end with related entity +
+  // u32 (timestamp + duration on aura tiles); appearance length is 11 (classic) or 5 (compact).
   if (reader.remaining > GROUND_ITEM_SHORT_BODY_SIZE) {
     const mark = reader.position;
     const headerFields = reader.bytes(GROUND_ITEM_LONG_HEADER_SIZE);
@@ -870,10 +935,118 @@ export function decodeGroundItemUpdate(reader: BinaryReader): GroundItemUpdateBo
   };
 }
 
+const GROUND_ITEM_REF_LIST_MIN_SIZE = 10;
+const GROUND_ITEM_REF_LIST_MAX_ENTRIES = 64;
+
+/**
+ * Type 0x1a ref/value list variant (10+ bytes, no entityRef):
+ *   u8×3 reserved (0), u8 count
+ *   count × { u16 ref, u16 value }
+ *   u8 flagCount, flagCount × { u16 ref, u8 flag }
+ *   u8 terminator (0)
+ *
+ * Refs are clustered per frame and grow across the session (1148/1149 →
+ * 1641–1644 → 1707–1712 within ~35 min), which points at runtime
+ * ground-entity indexes. The paired u16 value and u8 flag semantics are
+ * unconfirmed. Either list may be empty (count=0 frames carry only flags).
+ * Detection is structural: zero prefix + exact length match, so real
+ * entityRef-headed frames (min 22 bytes) never collide.
+ */
+function tryDecodeGroundItemRefList(reader: BinaryReader): GroundItemUpdateBody | null {
+  const buffer = reader.bufferView;
+  const start = reader.position;
+  const length = reader.remaining;
+
+  if (length < GROUND_ITEM_REF_LIST_MIN_SIZE) {
+    return null;
+  }
+  if (buffer[start] !== 0 || buffer[start + 1] !== 0 || buffer[start + 2] !== 0) {
+    return null;
+  }
+
+  const count = buffer[start + 3];
+  if (count > GROUND_ITEM_REF_LIST_MAX_ENTRIES) {
+    return null;
+  }
+
+  const flagCountOffset = 4 + count * 4;
+  if (flagCountOffset >= length) {
+    return null;
+  }
+  const flagCount = buffer[start + flagCountOffset];
+  if (flagCount > GROUND_ITEM_REF_LIST_MAX_ENTRIES) {
+    return null;
+  }
+  if (count === 0 && flagCount === 0) {
+    return null;
+  }
+  if (length !== flagCountOffset + 1 + flagCount * 3 + 1) {
+    return null;
+  }
+  if (buffer[start + length - 1] !== 0) {
+    return null;
+  }
+
+  reader.consumeZeroPad(3);
+  const counted = reader.u8();
+  if (counted !== count) {
+    throw new RangeError(`ground item ref list count mismatch: peeked ${count}, read ${counted}`);
+  }
+  const refValues: { ref: number; value: number }[] = [];
+  for (let index = 0; index < count; index += 1) {
+    refValues.push({ ref: reader.u16(), value: reader.u16() });
+  }
+
+  reader.u8(); // flagCount
+  const refFlags: { ref: number; flag: number }[] = [];
+  for (let index = 0; index < flagCount; index += 1) {
+    refFlags.push({ ref: reader.u16(), flag: reader.u8() });
+  }
+  reader.u8(); // terminator
+
+  return {
+    subType: 0,
+    count,
+    ...(refValues.length > 0 ? { refValues } : {}),
+    ...(refFlags.length > 0 ? { refFlags } : {}),
+  };
+}
+
+/**
+ * Type 0x1a compact drop notify (9 bytes):
+ *   u32 reserved (0), u8 amount, u32 itemId
+ * Observed repeatedly for stackable loot (e.g. Bakragore's Amalgamation).
+ */
+function decodeGroundItemDropNotify(reader: BinaryReader): GroundItemUpdateBody {
+  reader.u32(); // reserved
+  const amount = reader.u8();
+  const itemId = reader.u32();
+  const item = {
+    uuid: "",
+    itemId,
+    amount,
+    flagsA: 0,
+    flagsB: 0,
+    remainingUnits: 0,
+    meta: 0,
+    flags: 0,
+    suffix: 0,
+  };
+  return {
+    subType: 0,
+    count: amount,
+    items: [item],
+    item,
+  };
+}
+
+/** Classic short tile body: subType + count + 11 appearance + related(8) + extra(4). */
 const GROUND_ITEM_SHORT_BODY_SIZE = 25;
+/** Compact tile body seen on timed aura/effect tiles: same tail, shorter appearance. */
+const GROUND_ITEM_SHORT_BODY_MIN = 14;
 const GROUND_ITEM_LONG_HEADER_SIZE = 9;
 const GROUND_ITEM_INVENTORY_ENTRY_SIZE = 27;
-const GROUND_ITEM_APPEARANCE_SIZE = 11;
+const GROUND_ITEM_TILE_TAIL_SIZE = 12;
 
 function isUuidV7At(buffer: Uint8Array, offset: number): boolean {
   if (offset + 16 > buffer.length) {
@@ -914,13 +1087,20 @@ function decodeGroundItemTileTail(reader: BinaryReader): {
   relatedEntityRef: ReturnType<typeof readEntityRef>;
   extra: number;
 } | null {
-  if (reader.remaining < GROUND_ITEM_SHORT_BODY_SIZE) {
+  // Anchor on the trailing relatedEntityRef(8) + extra/duration(4). Appearance
+  // length varies: classic tiles use 11 bytes (25 total), compact aura tiles use 5 (19 total).
+  if (reader.remaining < GROUND_ITEM_SHORT_BODY_MIN) {
+    return null;
+  }
+
+  const prefixLen = reader.remaining - GROUND_ITEM_TILE_TAIL_SIZE;
+  if (prefixLen < 2) {
     return null;
   }
 
   const subType = reader.u8();
   const count = reader.u8();
-  const appearance = Array.from(reader.bytes(GROUND_ITEM_APPEARANCE_SIZE));
+  const appearance = Array.from(reader.bytes(prefixLen - 2));
   const relatedEntityRef = readEntityRef(reader);
   const extra = reader.u32();
   return { subType, count, appearance, relatedEntityRef, extra };
@@ -946,8 +1126,9 @@ function decodeGroundItemInventoryTrailer(reader: BinaryReader): {
     return { appearance, relatedEntityRef, extra };
   }
 
-  reader.rest();
-  return {};
+  throw new RangeError(
+    `ground item trailer has ${reader.remaining} unparsed trailing bytes`
+  );
 }
 
 export type GroundItemInventoryEntry = {

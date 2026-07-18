@@ -6,6 +6,7 @@ import type {
   DebugEventRecord,
   DebugTypeStats,
 } from "../../../../lib/types";
+import { copyText } from "../../utils/clipboard";
 import { formatBinaryType, formatDebugTimestamp } from "../../utils/format";
 import { SectionTitle } from "../ui/SectionTitle";
 import { StonegyButton } from "../ui/StonegyButton";
@@ -150,7 +151,7 @@ async function copyColumn(
   showFeedback: (msg: string, type?: "success" | "error") => void
 ): Promise<void> {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     showFeedback(`${label} column copied`, "success");
   } catch (error) {
     showFeedback(error instanceof Error ? error.message : "Failed to copy", "error");
@@ -206,7 +207,7 @@ function EventCard({
   const handleCopy = async (mouseEvent: MouseEvent<HTMLButtonElement>) => {
     mouseEvent.stopPropagation();
     try {
-      await navigator.clipboard.writeText(formatEventForCopy(event, count));
+      await copyText(formatEventForCopy(event, count));
       showFeedback("Event copied", "success");
     } catch (error) {
       showFeedback(error instanceof Error ? error.message : "Failed to copy", "error");
@@ -424,7 +425,7 @@ function CommandCard({
   const handleCopy = async (mouseEvent: MouseEvent<HTMLButtonElement>) => {
     mouseEvent.stopPropagation();
     try {
-      await navigator.clipboard.writeText(JSON.stringify(command, null, 2));
+      await copyText(JSON.stringify(command, null, 2));
       showFeedback("Command copied", "success");
     } catch (error) {
       showFeedback(error instanceof Error ? error.message : "Failed to copy", "error");
@@ -707,7 +708,7 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
       const dump = buildFlowDump(response.state ?? state);
       const activeCount = dump.activeFlows.length;
       const finishedCount = dump.flowTraces.length;
-      await navigator.clipboard.writeText(JSON.stringify(dump, null, 2));
+      await copyText(JSON.stringify(dump, null, 2));
       showFeedback(
         activeCount || finishedCount
           ? `Copied ${finishedCount} finished + ${activeCount} active flow(s)`
@@ -726,11 +727,11 @@ export function DebugPanel({ state, showFeedback }: DebugPanelProps) {
       const target = dump.last;
       if (!target) {
         // Still copy service/player state so a stuck bot is diagnosable.
-        await navigator.clipboard.writeText(JSON.stringify(dump, null, 2));
+        await copyText(JSON.stringify(dump, null, 2));
         showFeedback("No flow traces — copied player/service state", "success");
         return;
       }
-      await navigator.clipboard.writeText(
+      await copyText(
         JSON.stringify(
           {
             copiedAt: dump.copiedAt,

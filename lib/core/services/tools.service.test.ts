@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { encodeBossHuntId } from "../../hunt-ids";
 import { ReceiveMessageTypes, SendMessageTypes } from "../../protocol";
+import { LONG_COOLDOWN } from "../commands/cooldown";
 import { GameSession } from "../session";
 import type { Transport } from "../transport";
 import { defaultSettings } from "../settings";
@@ -226,6 +227,89 @@ describe("auto training", () => {
     });
 
     expect(tools(session).canAutoTrain()).toBe(false);
+  });
+
+  it("does not start while a party ready-check modal is open", async () => {
+    const session = createSession({ autoConfirmPartyHunt: false });
+    session.updateView({
+      party: { ...session.view.party, readyCheckId: "rc-open" },
+    });
+
+    expect(tools(session).canAutoTrain()).toBe(false);
+
+    tools(session).scheduleAutoTrainingCheck();
+    await vi.advanceTimersByTimeAsync(DEFAULT_AUTO_TRAINING_IDLE_DELAY_SEC * 1_000);
+    await Promise.resolve();
+
+    expect(session.commands.run).not.toHaveBeenCalled();
+  });
+
+  it("defers idle training until the party ready-check is cleared", async () => {
+    const session = createSession({
+      autoConfirmPartyHunt: false,
+      autoTrainingIdleDelaySec: 1,
+    });
+    session.commands.run = vi.fn().mockImplementation(async (type) => {
+      if (type === SendMessageTypes.START_TRAINING) {
+        session.updateView({ training: { activeTrainingId: "train-42" } });
+      }
+      return { sent: true, success: true };
+    });
+
+    const readyCheckSnapshot = {
+      kind: "json" as const,
+      direction: "receive" as const,
+      message: {
+        type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+        data: {
+          meId: "char-1",
+          party: {
+            status: "idle",
+            members: [],
+            readyCheck: {
+              id: "rc-open",
+              memberStatuses: { "char-1": "pending" },
+            },
+          },
+        },
+      },
+      raw: "",
+    };
+    const clearedSnapshot = {
+      kind: "json" as const,
+      direction: "receive" as const,
+      message: {
+        type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+        data: {
+          meId: "char-1",
+          party: { status: "idle", members: [], readyCheck: null },
+        },
+      },
+      raw: "",
+    };
+
+    await tools(session).onEvent(readyCheckSnapshot);
+    session.updateView({
+      party: { ...session.view.party, readyCheckId: "rc-open" },
+    });
+
+    // Ready-check defers with LONG_COOLDOWN; starting must wait for confirm/cancel.
+    await vi.advanceTimersByTimeAsync(LONG_COOLDOWN);
+    await Promise.resolve();
+    expect(session.commands.run).not.toHaveBeenCalled();
+
+    session.updateView({
+      party: { ...session.view.party, readyCheckId: null },
+    });
+    await tools(session).onEvent(clearedSnapshot);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+    expect(session.commands.run).toHaveBeenCalledWith(
+      SendMessageTypes.START_TRAINING,
+      expect.any(Object),
+      expect.any(Object)
+    );
   });
 
   it("cancels a pending idle timer", async () => {

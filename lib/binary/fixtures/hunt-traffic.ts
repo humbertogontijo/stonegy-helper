@@ -14,11 +14,47 @@ export const huntTrafficFixtures = {
   huntEntityUuidList:
     "U0cFCgAAAAYAJAAwMTlmNDhmMC1hMmUzLTczM2UtOTIxZC1kYWIxOWQzNDVmOWMkADAxOWY0OGRhLTM1N2MtNzMzZC1hZmUyLTZiYTViNTRlYWYyOSQAMDE5ZjQ4ZDItZTc2MC03MzNkLWE0NDUtMzk4MDdmNWIwYWU1JAAwMTlmNDhkMi02ZTQzLTczM2QtYTM4NC02NDg0MzczNTI4NWUkADAxOWY0OGQwLTI4ZWItNzMzZC05ZmZhLTgxMmJlM2Q4MzAyZCQAOTYyMDQzZTItYjVhNy00MTQwLThhYmEtNjZmYWJhZTVkZjc0",
 
-  /** Short combat hit — 52 damage, attacker 1 → target 2. */
-  combatDamage52: "U0cFGQABAAIEBjQAAAAB",
+  /** Type 0x19 disc-0 combat_float — HP heal 52 on runtimePlayerId 1 at (0,0). */
+  combatFloatHeal52: "U0cFGQABAAIEBjQAAAAB",
 
-  /** Compact type-0x09 hit — 0 damage, attacker 1 → target 1. */
-  compactCombatDamage0: "U0cFCQEBAQQGAAA=",
+  /** Type 0x19 disc-0 combat_float — mana restore + two HP heals. */
+  combatFloatMultiHit: "U0cFGQADAACEBb0A/gACAgQGUQH+AAICBAbMAwAAAQ==",
+
+  /** Type 0x19 disc-0 combat_float — fire damage 700 on runtimePlayerId 1 at (0,0). */
+  combatFloatFire700: "U0cFGQABAAAEArwCAAAB",
+
+  /** Type 0x1c spell_cast — Auto-Attack with monster combat hits (HAR Asura Vaults). */
+  spellCastAutoAttackHits:
+    "U0cFHAYLAEF1dG8tQXR0YWNrHgAvaW52ZW50b3J5L015Y29sb2dpY2FsX0Jvdy5naWYTAFRydWUgRGF3bmZpcmUgQXN1cmETAFRydWUgTWlkbmlnaHQgQXN1cmEaAC9pbnZlbnRvcnkvU3Bpa2VfU3dvcmQuZ2lmIgAvaW52ZW50b3J5L0RyZWFtX0Jsb3Nzb21fU3RhZmYuZ2lmAx8CAgABHwMCAAQfBAIABQoAgAACFQAAAAGACAUjAvwABPgACEEAAf+OApoEAAL4AAhBAP//kAIJAwAD+AAIQQAA/5MCcQMAA/gACEEAAQGPAssBAAKACAUaAPz/AvgACAEAAf+OApkEAQL4AARaAAH/jgI/BAICgAAIpgAAAAE=",
+
+  /**
+   * Type 0x1c — Thunderstorm Rune + Terra Wave. Energy hits are linked to tanks
+   * 1/2 on the wire, but 0x0f actors name player 3 as the Thunderstorm caster.
+   */
+  spellCastThunderstormTerraWave:
+    "U0cFHAQRAFRodW5kZXJzdG9ybSBSdW5lEwBUcnVlIERhd25maXJlIEFzdXJhEwBUcnVlIE1pZG5pZ2h0IEFzdXJhCgBUZXJyYSBXYXZlAw8CAQAPAwEADwQBAyAAgAgFqQEEAAOCAAbgAwAAAYAIBZgAAAAB+AAEiwAB/44CNwcAAfgABIwAAQCNAqYDAAH4AASIAAEBjwLtBQAB+AAEhAAA/5MCKwcAAvgABLUA//+QAiIHAAL4AARmAP8AkgKpAwAB+AAEdwD/AZECQAIAAYAIBT8A/P8C+AAE/QD/AZECQwEBAfgABLkA/wCSAvACAQH4AAT9AP//kAIlBgEC+AAEuQAA/5MCcgYBAvgABA8BAQGPAt4EAQH4AAQqAQEAjQJ8AgEB+AAEowAB/44ClAYBAYAIBR0ABAAD+AABTQEB/44CRwUCAfgAAYMBAQCNAvkAAgH4AAFXAgEBjwKHAgIB+AABQAIA/5MCMgQCAvgAAR4C//+QAgcEAgL4AAExAv8AkgK/AAIB+AABQwH/AZECAAACAYEAB78iAAABgQAHXxX8/wKBAAeFEQQAA4EAB4UR/AAEgAAIegAAAAGAAAKWAQAAAQ==",
+
+  /** Type 0x19 auto_attack — Gnome Sword hits with monster combat hits. */
+  autoAttackMonsterHits:
+    "U0cFGQULAEF1dG8tQXR0YWNrGgAvaW52ZW50b3J5L0dub21lX1N3b3JkLmdpZhMAVHJ1ZSBEYXduZmlyZSBBc3VyYRoAL2ludmVudG9yeS9TcGlrZV9Td29yZC5naWYiAC9pbnZlbnRvcnkvRHJlYW1fQmxvc3NvbV9TdGFmZi5naWYFAPgPCA0AAQCNAi8EAQIAAQL4DwRXAAEAjQIvBAECAAEC+A8IAwABAI0CLAQDAgADAvgPBEMAAQCNAukDBAIABAIABAhyAQAAAQ==",
+
+  /** Type 0x08 cooldown_update — attack cast: spell slot 2 (+4s) + group slot 1 (+2s). */
+  cooldownUpdateAttackCast: "U0cFCAEAAQIB3WTwcZ8BAAANXfBxnwEAAA==",
+
+  /** Type 0x08 cooldown_update — potion (group 3, global) + heal group (2 records). */
+  cooldownUpdatePotionAndHeal: "U0cFCAIAA/8AoVXwcZ8BAAACAwOhVfBxnwEAAKFV8HGfAQAA",
+
+  /** Type 0x09 — single entity, mask 0x01 (bit0=1540). */
+  vitalsSingleBit0: "U0cFCQEBAQQGAAA=",
+
+  /** Type 0x09 — one entity with bits 0+2 (11-byte payload). */
+  vitalsBits02: "U0cFCQEBBRoOAAB7AgAA",
+
+  /** Type 0x09 — three entities, mixed masks (27-byte payload). */
+  vitalsMixed27: "U0cFCQMDBLANAAABBTsPAABUAwAAAgVHCQAAGgwAAA==",
+
+  /** Type 0x09 — three entities sharing bit4 (31-byte payload). */
+  vitalsSharedBit4: "U0cFCQMBETsPAABGAQAAAhSbDAAARgEAAAMUqw8AAEYBAAA=",
 
   /** Session stamina snapshot near max (12h cap). */
   sessionMetric: "U0cFFnxlAAC9kQIAQSwCAA==",
@@ -110,20 +146,153 @@ export const expectedHuntLootStarterItemGrant = {
   remainingUnits: 0,
 } as const;
 
-export const expectedCombatDamage52 = {
-  attackerIndex: 1,
-  targetIndex: 2,
-  damageKind: 1540,
-  amount: 52,
-  flag: 1,
+export const expectedCombatFloatHeal52 = {
+  hits: [
+    {
+      category: 2,
+      kind: 1540,
+      amount: 52,
+      tileX: 0,
+      tileY: 0,
+      runtimePlayerId: 1,
+    },
+  ],
 } as const;
 
-export const expectedCompactCombatDamage0 = {
-  attackerIndex: 1,
-  targetIndex: 1,
-  damageKind: 1540,
-  amount: 0,
-  flag: 0,
+export const expectedCombatFloatMultiHit = {
+  hits: [
+    {
+      category: 0,
+      kind: 1412,
+      amount: 189,
+      tileX: -2,
+      tileY: 0,
+      runtimePlayerId: 2,
+    },
+    {
+      category: 2,
+      kind: 1540,
+      amount: 337,
+      tileX: -2,
+      tileY: 0,
+      runtimePlayerId: 2,
+    },
+    {
+      category: 2,
+      kind: 1540,
+      amount: 972,
+      tileX: 0,
+      tileY: 0,
+      runtimePlayerId: 1,
+    },
+  ],
+} as const;
+
+export const expectedCooldownUpdateAttackCast = {
+  records: [
+    {
+      groupId: 1,
+      slotA: 2,
+      slotB: 1,
+      expiresAtA: 1784323007709,
+      expiresAtB: 1784323005709,
+    },
+  ],
+} as const;
+
+export const expectedCooldownUpdatePotionAndHeal = {
+  records: [
+    { groupId: 3, slotA: 0xff, slotB: 0, expiresAtA: 1784323003809 },
+    {
+      groupId: 2,
+      slotA: 3,
+      slotB: 3,
+      expiresAtA: 1784323003809,
+      expiresAtB: 1784323003809,
+    },
+  ],
+} as const;
+
+/** Type 0x19 disc-0 combat_float — fire damage 700 on runtimePlayerId 1 at (0,0). HAR Asura Vaults. */
+export const expectedCombatFloatFire700 = {
+  hits: [
+    {
+      category: 0,
+      kind: 516,
+      amount: 700,
+      tileX: 0,
+      tileY: 0,
+      runtimePlayerId: 1,
+    },
+  ],
+} as const;
+
+export const expectedVitalsSingleBit0 = {
+  records: [{ entityIndex: 1, fieldMask: 0x01, fields: [{ bit: 0, value: 1540 }] }],
+} as const;
+
+export const expectedVitalsBits02 = {
+  records: [
+    {
+      entityIndex: 1,
+      fieldMask: 0x05,
+      fields: [
+        { bit: 0, value: 3610 },
+        { bit: 2, value: 635 },
+      ],
+    },
+  ],
+} as const;
+
+export const expectedVitalsMixed27 = {
+  records: [
+    { entityIndex: 3, fieldMask: 0x04, fields: [{ bit: 2, value: 3504 }] },
+    {
+      entityIndex: 1,
+      fieldMask: 0x05,
+      fields: [
+        { bit: 0, value: 3899 },
+        { bit: 2, value: 852 },
+      ],
+    },
+    {
+      entityIndex: 2,
+      fieldMask: 0x05,
+      fields: [
+        { bit: 0, value: 2375 },
+        { bit: 2, value: 3098 },
+      ],
+    },
+  ],
+} as const;
+
+export const expectedVitalsSharedBit4 = {
+  records: [
+    {
+      entityIndex: 1,
+      fieldMask: 0x11,
+      fields: [
+        { bit: 0, value: 3899 },
+        { bit: 4, value: 326 },
+      ],
+    },
+    {
+      entityIndex: 2,
+      fieldMask: 0x14,
+      fields: [
+        { bit: 2, value: 3227 },
+        { bit: 4, value: 326 },
+      ],
+    },
+    {
+      entityIndex: 3,
+      fieldMask: 0x14,
+      fields: [
+        { bit: 2, value: 4011 },
+        { bit: 4, value: 326 },
+      ],
+    },
+  ],
 } as const;
 
 export const expectedPlayerVitals = {
@@ -180,23 +349,25 @@ export const expectedHuntAnalyzerSnapshotCompact = {
 
 export const expectedAbilityCastFrontSweep = {
   strings: ["Front Sweep", "Soul-Broken Harbinger"],
-  targetCount: 7,
-  timestamp: 0,
-  targets: [
-    { attackerIndex: 0, effectType: 132, paramA: 35845, paramB: 0, paramC: 256, tail: 120 },
-    { attackerIndex: 15, effectType: 8, paramA: 62, paramB: 65280, paramC: 716, tail: 0 },
-    { attackerIndex: 0, effectType: 1, paramA: 1, paramB: 1, paramC: 1412, tail: 6 },
-    { attackerIndex: 0, effectType: 0, paramA: 256, paramB: 1025, paramC: 62983, tail: 26 },
-    { attackerIndex: 0, effectType: 0, paramA: 257, paramB: 1796, paramC: 3480, tail: 4 },
-    { attackerIndex: 0, effectType: 2, paramA: 1025, paramB: 38919, paramC: 64525, tail: 0 },
-    { attackerIndex: 3, effectType: 1, paramA: 1796, paramB: 3480, paramC: 254, tail: 4 },
-  ],
+  combatHitCount: 7,
+  monsterHit: {
+    target: "monster",
+    amount: 62,
+    school: 8,
+    attackerRuntimePlayerId: 1,
+    abilityName: "Front Sweep",
+    monsterName: "Soul-Broken Harbinger",
+  },
 } as const;
 
 export const expectedAbilityCastBatchedMultiCast = {
   strings: ["Fierce Berserk", "Soul-Broken Harbinger", "Terra Wave", "Great Fire Wave"],
-  /** Length of the undecoded target/effect region preserved on rawTail. */
-  rawTailLength: 172,
+  /** Monster damage per `attackerRuntimePlayerId:abilityName`. */
+  dealtByAbility: {
+    "1:Fierce Berserk": 600,
+    "3:Terra Wave": 985,
+    "4:Great Fire Wave": 875,
+  },
 } as const;
 
 export const expectedSupportAbilityCastUtitoTempo = {

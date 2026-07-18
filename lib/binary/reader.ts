@@ -101,6 +101,12 @@ export class BinaryReader {
     return value;
   }
 
+  i8() {
+    this.ensureAvailable(1);
+    const value = this.buffer[this.offset++];
+    return value > 0x7f ? value - 0x100 : value;
+  }
+
   i32() {
     return this.u32() | 0;
   }

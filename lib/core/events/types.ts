@@ -1,5 +1,13 @@
-import type { InventorySnapshotBody, MarketSnapshotBody } from "../../binary/types";
 import type {
+  AutoAttackBody,
+  EntityMoveBody,
+  EntityPositionBody,
+  InventorySnapshotBody,
+  MarketSnapshotBody,
+  SpellCastBody,
+} from "../../binary/types";
+import type {
+  CombatFloatBody,
   MonsterLootBody,
   GroundItemUpdateBody,
   ItemGrantBody,
@@ -50,6 +58,36 @@ export type GameEvent =
       kind: "market_snapshot_binary";
       direction: "receive";
       data: MarketSnapshotBody;
+      raw: string;
+    }
+  | {
+      kind: "combat_float";
+      direction: "receive";
+      data: CombatFloatBody;
+      raw: string;
+    }
+  | {
+      kind: "spell_cast";
+      direction: "receive";
+      data: SpellCastBody;
+      raw: string;
+    }
+  | {
+      kind: "auto_attack";
+      direction: "receive";
+      data: AutoAttackBody;
+      raw: string;
+    }
+  | {
+      kind: "entity_move";
+      direction: "receive";
+      data: EntityMoveBody;
+      raw: string;
+    }
+  | {
+      kind: "entity_position";
+      direction: "receive";
+      data: EntityPositionBody;
       raw: string;
     }
   | {

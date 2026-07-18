@@ -1,5 +1,6 @@
 import { hasAllBlessings, nextAffordableBlessing } from "../../domain/bless";
 import { canAutoHuntClaimIdle } from "../../domain/hunt/guards";
+import { areAllPartyMembersOnline } from "../../domain/party/online";
 import { isStartableHuntId } from "../../hunts";
 import { featureCooldown, LONG_COOLDOWN, BURST_COOLDOWN, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity, readPartyMemberCount } from "../humanize";
@@ -395,6 +396,14 @@ export class ToolsService extends Service {
     }
     const hunt = this.ctx.session.services.tryGet<HuntService>("hunt");
     return hunt?.isAwaitingHuntStart() === true;
+  }
+
+  /** True while the party ready-check modal is open for anyone (confirmed/canceled clears it). */
+  private hasActivePartyReadyCheck(data?: PartySnapshotPayload): boolean {
+    if (typeof data?.party?.readyCheck?.id === "string") {
+      return true;
+    }
+    return this.partyState.readyCheckId != null;
   }
 
   /** Unresolved ready-check the helper should eventually confirm (blessings may still be missing). */
@@ -820,7 +829,7 @@ export class ToolsService extends Service {
 
         if (
           this.hasActionablePartyInvite(data) ||
-          this.unresolvedReadyCheckId(data) != null ||
+          this.hasActivePartyReadyCheck(data) ||
           this.shouldDisbandPartyWhenAlone({
             memberCount: readPartyMemberCount(data?.party),
             status: typeof data?.party?.status === "string" ? data.party.status : null,
@@ -913,6 +922,9 @@ export class ToolsService extends Service {
       goldCoins: this.sessionState.goldCoins,
       blessings: this.blessState.blessings,
       ownedCount: this.blessState.ownedCount,
+      allPartyMembersOnline: areAllPartyMembersOnline(this.partyState.partyMembers, {
+        excludeCharacterId: this.sessionState.characterId,
+      }),
     });
   }
 
@@ -948,6 +960,11 @@ export class ToolsService extends Service {
     }
 
     if (isInActiveHunt(session) || isInActiveTraining(session)) {
+      return false;
+    }
+
+    // Wait for the party confirm modal to be confirmed or canceled.
+    if (this.hasActivePartyReadyCheck()) {
       return false;
     }
 

@@ -1,3 +1,5 @@
+import type { AbilityCombatHit, CombatActor } from "./ability-combat-hits.ts";
+
 export const STONEGY_BINARY_MAGIC = "SG";
 export const STONEGY_BINARY_VERSION = 0x05;
 
@@ -5,8 +7,9 @@ export enum StonegyBinaryMessageType {
   HuntEntitySpawn = 0x02,
   HuntAnalyzerSnapshot = 0x05,
   KillEvent = 0x06,
-  EntityUpdate = 0x08,
-  VitalDelta = 0x09,
+  /** Spell/potion cooldown sync (records of unix-ms expiries). */
+  CooldownUpdate = 0x08,
+  Vitals = 0x09,
   /** Multiplexed hunt frame: monster loot, item grants, or entity uuid lists. */
   HuntLoot = 0x0a,
   AnalyzerStats = 0x0b,
@@ -87,31 +90,19 @@ export interface SpeechBody {
 
 export interface SpellCastBody {
   strings: string[];
-  header: {
-    mode: number;
-    effectId: number;
-    fieldA: number;
-    fieldB: number;
-  };
-  effects: Array<{ fields: number[] }>;
+  /**
+   * 0x0f (spell) / 0x1f (weapon swing) actor records — attacker + ability
+   * string index. Monster rows reference this list by actor index.
+   */
+  actors: CombatActor[];
+  /** Player float rows + attributed monster hits. */
+  combatHits: AbilityCombatHit[];
 }
 
 export interface AutoAttackBody {
   strings: string[];
-  targetCount: number;
-  timestamp: number;
-  targets: Array<{
-    attackerIndex: number;
-    effectType: number;
-    paramA: number;
-    paramB: number;
-    paramC: number;
-    /** Present on multi-hit ability frames that omit the u64 timestamp. */
-    tail?: number;
-  }>;
-  effects: Array<{ fields: number[] }>;
-  /** Observed on batched multi-cast frames before the per-target records. */
-  batchLead?: number;
+  /** Player float rows + attributed monster hits. */
+  combatHits: AbilityCombatHit[];
 }
 
 export interface SupportAbilityCastEffectTail {
@@ -200,9 +191,9 @@ export interface MapBootstrapBody {
 import type { ClientAreaBody } from "./client-area.ts";
 import type {
   AnalyzerStatsBody,
-  CombatDamageBody,
+  CombatFloatBody,
   CounterTripletBody,
-  EntityUpdateBody,
+  CooldownUpdateBody,
   GroundItemUpdateBody,
   HuntEntitySpawnBody,
   HuntAnalyzerSnapshotBody,
@@ -214,7 +205,7 @@ import type {
   SessionMetricBody,
   GoldBalanceBody,
   StatusEffectBody,
-  VitalDeltaBody,
+  VitalsBody,
   XpGainBody,
 } from "../protocol-messages.ts";
 
@@ -251,8 +242,8 @@ export type DecodedBinaryBody =
   | { kind: "hunt_entity_spawn"; data: HuntEntitySpawnBody }
   | { kind: "hunt_analyzer_snapshot"; data: HuntAnalyzerSnapshotBody }
   | { kind: "kill_event"; data: KillEventBody }
-  | { kind: "entity_update"; data: EntityUpdateBody }
-  | { kind: "vital_delta"; data: VitalDeltaBody }
+  | { kind: "cooldown_update"; data: CooldownUpdateBody }
+  | { kind: "vitals"; data: VitalsBody }
   | { kind: "monster_loot"; data: MonsterLootBody }
   | { kind: "item_grant"; data: ItemGrantBody }
   | { kind: "entity_uuid_list"; data: EntityUuidListBody }
@@ -267,7 +258,7 @@ export type DecodedBinaryBody =
   | { kind: "speech"; data: SpeechBody }
   | { kind: "spell_cast"; data: SpellCastBody }
   | { kind: "status_effect"; data: StatusEffectBody }
-  | { kind: "combat_damage"; data: CombatDamageBody }
+  | { kind: "combat_float"; data: CombatFloatBody }
   | { kind: "auto_attack"; data: AutoAttackBody }
   | { kind: "support_ability_cast"; data: SupportAbilityCastBody }
   | { kind: "ground_item_update"; data: GroundItemUpdateBody }

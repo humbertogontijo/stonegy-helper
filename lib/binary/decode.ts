@@ -7,10 +7,9 @@ import { assertSupportedVersion, parseEnvelope } from "./envelope.ts";
 import { decodeEntityMove, decodeEntityPosition } from "./entity-move.ts";
 import {
   decodeAnalyzerStats,
-  decodeCombatDamage,
-  decodeCompactCombatDamage,
+  decodeCombatFloat,
   decodeCounterTriplet,
-  decodeEntityUpdate,
+  decodeCooldownUpdate,
   decodeGroundItemUpdate,
   decodeHuntAnalyzerSnapshot,
   decodeHuntEntitySpawn,
@@ -20,7 +19,7 @@ import {
   decodeSessionMetric,
   decodeGoldBalance,
   decodeStatusEffect,
-  decodeVitalDelta,
+  decodeVitals,
   decodeXpGain,
 } from "./hunt-events.ts";
 import { decodeInventorySnapshot } from "./inventory-snapshot.ts";
@@ -33,13 +32,18 @@ import { decodeVisualUpdate } from "./visual-update.ts";
 import { decodeHuntWorldSnapshot } from "./world-snapshot.ts";
 import { STONEGY_BINARY_MAGIC, STONEGY_BINARY_VERSION, StonegyBinaryMessageType } from "./types.ts";
 import type {
+  AutoAttackBody,
   DecodedBinaryBody,
   DecodedBinaryMessage,
+  EntityMoveBody,
+  EntityPositionBody,
   InventorySnapshotBody,
   MarketSnapshotBody,
   SpeechBody,
+  SpellCastBody,
 } from "./types.ts";
 import type {
+  CombatFloatBody,
   EntityUuidListBody,
   GoldBalanceBody,
   GroundItemUpdateBody,
@@ -108,10 +112,10 @@ function validateDecodedBody(type: number, body: DecodedBinaryBody): DecodedBina
     return body;
   }
 
-  // Multiplexed types (VitalDelta 0x09, AutoAttack 0x19): validate by body.kind.
+  // Multiplexed types (AutoAttack 0x19 / AbilityCast 0x12): validate by body.kind.
   if (
-    (type === StonegyBinaryMessageType.VitalDelta ||
-      type === StonegyBinaryMessageType.AutoAttack) &&
+    (type === StonegyBinaryMessageType.AutoAttack ||
+      type === StonegyBinaryMessageType.AbilityCast) &&
     "data" in body
   ) {
     const kindSchema = binaryBodyKindSchemas[body.kind];
@@ -144,10 +148,10 @@ function decodeBodyOrThrowUnvalidated(
       return { kind: "hunt_analyzer_snapshot", data: decodeHuntAnalyzerSnapshot(reader) };
     case StonegyBinaryMessageType.KillEvent:
       return { kind: "kill_event", data: decodeKillEvent(reader) };
-    case StonegyBinaryMessageType.EntityUpdate:
-      return { kind: "entity_update", data: decodeEntityUpdate(reader) };
-    case StonegyBinaryMessageType.VitalDelta:
-      return decodeVitalDeltaMessage(reader, payloadLength);
+    case StonegyBinaryMessageType.CooldownUpdate:
+      return { kind: "cooldown_update", data: decodeCooldownUpdate(reader) };
+    case StonegyBinaryMessageType.Vitals:
+      return { kind: "vitals", data: decodeVitals(reader) };
     case StonegyBinaryMessageType.HuntLoot:
       return decodeHuntFrame(reader);
     case StonegyBinaryMessageType.AnalyzerStats:
@@ -203,18 +207,6 @@ function decodeBodyOrThrowUnvalidated(
   }
 }
 
-function decodeVitalDeltaMessage(reader: BinaryReader, payloadLength: number): DecodedBinaryBody {
-  if (payloadLength === 7) {
-    return { kind: "combat_damage", data: decodeCompactCombatDamage(reader) };
-  }
-
-  if (payloadLength === 13) {
-    return { kind: "vital_delta", data: decodeVitalDelta(reader) };
-  }
-
-  throw new RangeError(`Unsupported vital delta payload length: ${payloadLength}`);
-}
-
 function decodeEntityPositionSync(reader: BinaryReader): DecodedBinaryBody {
   const indexStart = reader.position;
   reader.u16();
@@ -251,7 +243,7 @@ function decodeAutoAttackOrDamage(reader: BinaryReader, wireType: number): Decod
 
   if (discriminator === 0 && wireType === StonegyBinaryMessageType.AutoAttack) {
     reader.u8();
-    return { kind: "combat_damage", data: decodeCombatDamage(reader) };
+    return { kind: "combat_float", data: decodeCombatFloat(reader) };
   }
 
   const body = decodeAbilityCastPacket(reader, wireType);
@@ -316,6 +308,36 @@ export function isEntityUuidList(message: DecodedBinaryMessage): message is Deco
   return message.body.kind === "entity_uuid_list";
 }
 
+export function isCombatFloat(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "combat_float"; data: CombatFloatBody };
+} {
+  return message.body.kind === "combat_float";
+}
+
+export function isSpellCast(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "spell_cast"; data: SpellCastBody };
+} {
+  return message.body.kind === "spell_cast";
+}
+
+export function isAutoAttack(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "auto_attack"; data: AutoAttackBody };
+} {
+  return message.body.kind === "auto_attack";
+}
+
+export function isEntityMove(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "entity_move"; data: EntityMoveBody };
+} {
+  return message.body.kind === "entity_move";
+}
+
+export function isEntityPosition(message: DecodedBinaryMessage): message is DecodedBinaryMessage & {
+  body: { kind: "entity_position"; data: EntityPositionBody };
+} {
+  return message.body.kind === "entity_position";
+}
+
 export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
   switch (message.body.kind) {
     case "ping":
@@ -328,10 +350,27 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
     }
     case "kill_event":
       return `kill(xp=${message.body.data.xp})`;
-    case "entity_update":
-      return `entity_update(sub=${message.body.data.subType}, refs=${message.body.data.entityRefs.length})`;
-    case "vital_delta":
-      return `vital(target=${message.body.data.targetIndex}, delta=${message.body.data.delta})`;
+    case "cooldown_update": {
+      const { records } = message.body.data;
+      const detail = records
+        .map((record) => {
+          const second =
+            record.expiresAtB != null ? `, slot${record.slotB}@${record.expiresAtB}` : "";
+          return `g${record.groupId}:slot${record.slotA}@${record.expiresAtA}${second}`;
+        })
+        .join(" ");
+      return `cooldown_update(${records.length} records${detail ? ` ${detail}` : ""})`;
+    }
+    case "vitals": {
+      const { records } = message.body.data;
+      const detail = records
+        .map((record) => {
+          const fields = record.fields.map((field) => `bit${field.bit}=${field.value}`).join(",");
+          return `${record.entityIndex}:{${fields}}`;
+        })
+        .join(" ");
+      return `vitals(${records.length} records${detail ? ` ${detail}` : ""})`;
+    }
     case "monster_loot": {
       const { totalLootValue, drops } = message.body.data;
       return `monster_loot(${drops.length} drops, total=${totalLootValue})`;
@@ -372,15 +411,29 @@ export function summarizeBinaryMessage(message: DecodedBinaryMessage): string {
       return `session(stamina=${message.body.data.staminaMs}ms)`;
     case "speech":
       return `speech("${message.body.data.text}")`;
-    case "spell_cast":
-      return `spell(${message.body.data.strings.join(" / ")})`;
+    case "spell_cast": {
+      const { strings, combatHits } = message.body.data;
+      const monsterHits = combatHits.filter((hit) => hit.target === "monster").length;
+      const hitSuffix = monsterHits > 0 ? `, ${monsterHits} monster hits` : "";
+      return `spell(${strings.join(" / ")}${hitSuffix})`;
+    }
     case "status_effect":
       return `status(target=${message.body.data.targetIndex}, effect=${message.body.data.effectId})`;
-    case "combat_damage":
-      return `damage(${message.body.data.amount} from ${message.body.data.attackerIndex} to ${message.body.data.targetIndex})`;
+    case "combat_float": {
+      const { hits } = message.body.data;
+      const detail = hits
+        .map(
+          (hit) =>
+            `${hit.amount} on ${hit.runtimePlayerId}@(${hit.tileX},${hit.tileY}) cat=${hit.category}/0x${hit.kind.toString(16)}`
+        )
+        .join("; ");
+      return `combat_float(${hits.length} hits${detail ? `: ${detail}` : ""})`;
+    }
     case "auto_attack": {
-      const { strings } = message.body.data;
-      return `auto_attack(${strings.join(" / ")})`;
+      const { strings, combatHits } = message.body.data;
+      const monsterHits = combatHits.filter((hit) => hit.target === "monster").length;
+      const hitSuffix = monsterHits > 0 ? `, ${monsterHits} monster hits` : "";
+      return `auto_attack(${strings.join(" / ")}${hitSuffix})`;
     }
     case "support_ability_cast":
       return `support_ability(${message.body.data.strings.join(" / ")})`;

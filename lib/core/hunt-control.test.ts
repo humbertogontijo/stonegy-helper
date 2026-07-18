@@ -297,6 +297,125 @@ describe("hunt-control", () => {
     vi.useRealTimers();
   });
 
+  it("stops auto-hunt on insufficient_gold without restarting", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+    };
+    session.services.get<BattleService>("battle").applySelectedHuntId(1);
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    await session.services.get<HuntService>("hunt").onEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.HUNT_FINISHED,
+        data: { reason: "insufficient_gold", mode: "hunt" },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.settings.autoHuntEnabled).toBe(false);
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("restarts auto-hunt after insufficient_capacity without clearing autoHuntEnabled", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+      autoSellLoot: false,
+      autoSplitLootOnHuntFinished: false,
+    };
+    session.services.get<BattleService>("battle").applySelectedHuntId(1);
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    await session.services.get<HuntService>("hunt").onEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.HUNT_FINISHED,
+        data: {
+          reason: "insufficient_capacity",
+          mode: "hunt",
+          bossFight: null,
+          questFight: null,
+          finishInfos: null,
+          currentMana: 3073,
+        },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.settings.autoHuntEnabled).toBe(true);
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.objectContaining({ huntId: 1 }),
+      expect.any(Object)
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("defers capacity-finish restart when loot sell owns the finish", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    await session.services.setMasters({
+      loot: true,
+      hunt: true,
+    });
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+      autoSellLoot: true,
+    };
+    session.services.get<BattleService>("battle").applySelectedHuntId(1);
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({ sent: true, success: true });
+
+    await session.services.get<HuntService>("hunt").onEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.HUNT_FINISHED,
+        data: { reason: "insufficient_capacity", mode: "hunt" },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.settings.autoHuntEnabled).toBe(true);
+    expect(session.services.getPlayerState().playerStateDetail).toContain(
+      "selling then restarting"
+    );
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+
+    vi.useRealTimers();
+  });
+
   it("rejects auto hunt when not party leader", async () => {
     const session = connectedSession();
     session.view = patchSessionView(session.view, {
@@ -439,6 +558,132 @@ describe("hunt-control", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("Hunt start failed");
     expect(session.settings.autoHuntEnabled).toBe(false);
+  });
+
+  it("enables auto hunt but defers START_HUNT while a party member is offline", async () => {
+    const session = connectedSession();
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partyLeaderId: "hero-1",
+        partyMemberCount: 2,
+        partyMembers: [
+          { id: "hero-1", name: "Hero", isOnline: true },
+          { id: "mate-1", name: "AllyA", isOnline: false },
+        ],
+      },
+    });
+    const runSpy = vi.spyOn(session.commands, "run");
+
+    const result = await session.services.get<HuntService>("hunt").enableAutoHunt(1);
+
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("AllyA");
+    expect(session.settings.autoHuntEnabled).toBe(true);
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it("auto-starts hunt on PARTY_SNAPSHOT once offline members are online", async () => {
+    vi.useFakeTimers();
+    const session = connectedSession();
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partyLeaderId: "hero-1",
+        partyMemberCount: 2,
+        partyMembers: [
+          { id: "hero-1", name: "Hero", isOnline: true },
+          { id: "mate-1", name: "AllyA", isOnline: false },
+        ],
+      },
+    });
+    session.settings = {
+      ...session.settings,
+      autoHuntEnabled: true,
+      selectedHuntId: 1,
+    };
+    session.services.get<BattleService>("battle").applySelectedHuntId(1);
+    const runSpy = vi.spyOn(session.commands, "run").mockResolvedValue({
+      sent: true,
+      success: true,
+      response: {
+        type: ReceiveMessageTypes.HUNT_BOOTSTRAP,
+        data: { hunt: { id: 1 } },
+      },
+    });
+
+    // Still offline — must not start.
+    await session.services.get<HuntService>("hunt").handleAutoHuntEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+        data: {
+          meId: "hero-1",
+          party: {
+            status: "idle",
+            leaderId: "hero-1",
+            members: [
+              { id: "hero-1", name: "Hero", isOnline: true },
+              { id: "mate-1", name: "AllyA", isOnline: false },
+            ],
+          },
+        },
+      },
+      raw: "",
+    });
+
+    expect(runSpy).not.toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.anything(),
+      expect.anything()
+    );
+
+    // Member comes online — PartyState updates via domains before cores in production;
+    // seed the projection then fire the auto-restart event.
+    session.view = patchSessionView(session.view, {
+      party: {
+        ...session.view.party,
+        partyMembers: [
+          { id: "hero-1", name: "Hero", isOnline: true },
+          { id: "mate-1", name: "AllyA", isOnline: true },
+        ],
+      },
+    });
+
+    const startPromise = session.services.get<HuntService>("hunt").handleAutoHuntEvent({
+      kind: "json",
+      direction: "receive",
+      message: {
+        type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+        data: {
+          meId: "hero-1",
+          party: {
+            status: "idle",
+            leaderId: "hero-1",
+            members: [
+              { id: "hero-1", name: "Hero", isOnline: true },
+              { id: "mate-1", name: "AllyA", isOnline: true },
+            ],
+          },
+        },
+      },
+      raw: "",
+    });
+    await vi.runAllTimersAsync();
+    await startPromise;
+
+    expect(runSpy).toHaveBeenCalledWith(
+      SendMessageTypes.START_HUNT,
+      expect.objectContaining({ huntId: 1 }),
+      expect.anything()
+    );
+
+    vi.useRealTimers();
   });
 
   it("blocks disabling auto hunt while tasker controls it", async () => {

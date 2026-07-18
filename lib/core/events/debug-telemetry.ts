@@ -197,13 +197,16 @@ function previewText(raw: string): string {
   return `${raw.slice(0, PREVIEW_LENGTH)}…`;
 }
 
+/** Enough for binary bodies like vitals records → fields → { bit, value }. */
+const MAX_SERIALIZE_DEPTH = 8;
+
 /** Plain JSON-safe clone for debug payloads (cycles → "[circular]", depth-capped). */
 export function serializeForDebug(
   value: unknown,
   depth = 0,
   seen: WeakSet<object> = new WeakSet()
 ): unknown {
-  if (depth > 5) {
+  if (depth > MAX_SERIALIZE_DEPTH) {
     return "[max depth]";
   }
 

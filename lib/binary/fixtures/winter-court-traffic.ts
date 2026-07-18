@@ -10,8 +10,8 @@ export const winterCourtTrafficFixtures = {
   batchedFourSpells:
     "U0cFGQQOAEZpZXJjZSBCZXJzZXJrFQBTb3VsLUJyb2tlbiBIYXJiaW5nZXIOAEV0aGVyZWFsIFNwZWFyDABUZXJyYSBTdHJpa2UMAACEBZIAAAABAgQGkgAAAAEAhAWzAAAAAXgPCNgA/wHrARUBAQEAAQCEBQsAAAABeA8IfgD/AesBlwACAQIBAIQFBgD8/wJ4DwGXAP8B6wEAAAMBAwEBBAcIEwAAAQEEB5gN/P8CAQQHmA38AAMBBAeYDQQABA==",
 
-  /** Type 0x19 — short damage frame (lead byte 0x00). */
-  combatDamage172: "U0cFGQABAACEBawAAAAB",
+  /** Type 0x19 disc-0 combat_float — mana restore 172 on runtimePlayerId 1 at (0,0). */
+  combatFloatMana172: "U0cFGQABAACEBawAAAAB",
 
   /** Type 0x0c — 12-byte layout (3×u32, no leading kind byte). */
   counterTriplet12Byte: "U0cFDH0AAAA9BwAA7wEAAA==",
@@ -20,8 +20,8 @@ export const winterCourtTrafficFixtures = {
   huntEntitySpawnFailed:
     "U0cFAgAABAAkADAxOWY0OTY4LTI1MTEtNzQ0MS04NTA5LTBlOGFiZGE2YTNhZHsAAACqdQAAAQEBAAAA/////9E/aEmfAQAAJAAwMTlmNDk2OC0yNTEyLTc0NDEtODUwOS0yNTMzYTJmNWFiNjd8AAAAr3UAAAEB//////////8DQWhJnwEAACQAMDE5ZjQ5NjgtMjUxMi03NDQxLTg1MDktMWMxNzNlNTU0MjlmfAAAAK91AAABAf////8BAAAACkhoSZ8BAAAkADAxOWY0OTY4LTI1MTItNzQ0MS04NTA5LTExNWIwYjk2NzVjYX0AAAC5dQAAAQEBAAAAAAAAAAtIaEmfAQAACAAAAAAA/////wEAAAAAAAAAAQAAAP////8BAAAAAQAAAP//////////AAAAAAEAAAD/////AQAAAP////8AAAAAARd4aEmfAQAA4C4AAA==",
 
-  /** Type 0x08 — entity_update subType=1. */
-  entityUpdate: "U0cFCAEAAQQB5xmASZ8BAADnGYBJnwEAAA==",
+  /** Type 0x08 — cooldown_update, group 1 slots 4+1, equal expiries. */
+  cooldownUpdate: "U0cFCAEAAQQB5xmASZ8BAADnGYBJnwEAAA==",
 
   /** Type 0x1a — short tile ground_item_update (subType=1, count=1). */
   groundItemUpdate: "U0cFGoQAAAAAAAf/AQEBAP8AAf//Af//ADBCgEmfAQAA4C4AAA==",
@@ -81,17 +81,38 @@ export const winterCourtTrafficFixtures = {
   supportUtamoTempo:
     "U0cFEgEBAQALAFVUQU1PX1RFTVBPCwBVdGFtbyBUZW1wbw0AUHJvdGVjdG9yLmdpZscyAAAAAAABAeAuAAAMAAAABwAAAA0AAAAhAAAALAEAALMAAAA=",
 
-  /** Type 0x09 — vital_delta target=2. */
-  vitalDelta: "U0cFCQICBCoIAAABBHsCAAA=",
+  /** Type 0x09 — two single-field records (entities 2 and 1, both bit2). */
+  vitals: "U0cFCQICBCoIAAABBHsCAAA=",
 
   /** Type 0x15 — xp gain +2832494. */
   xpGain: "U0cFFfAAAABuOCsAAAAAAAUABQEBAgEDAQQBBQE=",
 } as const;
 
 export const expectedWinterCourt = {
-  combatDamage172: { attackerIndex: 1, targetIndex: 0, damageKind: 1412, amount: 172, flag: 1 },
+  combatFloatMana172: {
+    hits: [
+      {
+        category: 0,
+        kind: 1412,
+        amount: 172,
+        tileX: 0,
+        tileY: 0,
+        runtimePlayerId: 1,
+      },
+    ],
+  },
   counterTriplet12Byte: { kind: 0, a: 125, b: 1853, c: 495 },
-  entityUpdate: { subType: 1, indexA: 256, indexB: 260, entityRefCount: 2 },
+  cooldownUpdate: {
+    records: [
+      {
+        groupId: 1,
+        slotA: 4,
+        slotB: 1,
+        expiresAtA: 1783644559847,
+        expiresAtB: 1783644559847,
+      },
+    ],
+  },
   groundItemUpdate: {
     subType: 1,
     count: 1,
@@ -130,12 +151,11 @@ export const expectedWinterCourt = {
     strings: ["UTAMO_TEMPO", "Utamo Tempo", "Protector.gif"],
     durationMs: 12000,
   },
-  vitalDelta: {
-    targetIndex: 2,
-    statKind: 1026,
-    sourceIndex: 2090,
-    delta: 67174400,
-    extra: 635,
+  vitals: {
+    records: [
+      { entityIndex: 2, fieldMask: 0x04, fields: [{ bit: 2, value: 2090 }] },
+      { entityIndex: 1, fieldMask: 0x04, fields: [{ bit: 2, value: 635 }] },
+    ],
   },
   xpGain: { kind: 240, xpGain: 2832494, sessionXp: 0 },
   batchedFourSpells: {

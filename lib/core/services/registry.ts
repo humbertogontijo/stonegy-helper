@@ -23,6 +23,7 @@ import type { InventoryState } from "./states/inventory.state";
 import type { MarketState } from "./states/market.state";
 import type { TasksState } from "./states/tasks.state";
 import type { BlessState } from "./states/bless.state";
+import type { CombatState } from "./states/combat.state";
 import type { BattleService } from "./battle.service";
 import type { LootService } from "./loot.service";
 import type { MarketService } from "./market.service";
@@ -263,6 +264,7 @@ export class ServiceRegistry {
     const market = this.tryGetDomain<MarketState>("marketState");
     const tasks = this.tryGetDomain<TasksState>("tasksState");
     const bless = this.tryGetDomain<BlessState>("blessState");
+    const combat = this.tryGetDomain<CombatState>("combatState");
 
     const huntGame = hunt?.projection() ?? {
       activeHuntId: null,
@@ -291,6 +293,7 @@ export class ServiceRegistry {
         currentHuntId: null,
         partyLeaderId: null,
         partyMemberCount: null,
+        partyMembers: [],
         partySnapshotSynced: false,
         lastSnapshotAt: null,
         readyCheckId: null,
@@ -333,6 +336,11 @@ export class ServiceRegistry {
         hasAolEquipped: null,
         blessings: [],
         lastSnapshotAt: null,
+      },
+      combat: combat?.projection() ?? {
+        entities: [],
+        startedAt: null,
+        updatedAt: null,
       },
       playerState: this.playerState,
       playerStateDetail: this.playerStateDetail,

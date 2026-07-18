@@ -35,6 +35,7 @@ import { readPageBridgeStatus, sendPageBridgeCommand } from "../../lib/page-brid
 import type { BotState } from "../../lib/types";
 import type { FeatureMasters, HostTimers } from "../../lib/core/services/types";
 import type { BattleService } from "../../lib/core/services/battle.service";
+import type { CombatState } from "../../lib/core/services/states/combat.state";
 import type { HuntService } from "../../lib/core/services/hunt.service";
 import type { LootService } from "../../lib/core/services/loot.service";
 import type { MarketService } from "../../lib/core/services/market.service";
@@ -261,6 +262,13 @@ export class ExtensionSessionHost {
 
   private broadcast(state: BotState = this.state): void {
     chrome.runtime.sendMessage({ channel: "state-updated", state }).catch(() => {});
+    // Content scripts are not recipients of runtime.sendMessage from the SW —
+    // push live state to the bound game tab for the in-page overlay.
+    if (this.boundTabId != null) {
+      chrome.tabs
+        .sendMessage(this.boundTabId, { channel: "state-updated", state })
+        .catch(() => {});
+    }
   }
 
   private bindTab(tabId: number): void {
@@ -429,6 +437,23 @@ export class ExtensionSessionHost {
           return { ok: false, error: "Bridge events require a Stonegy game tab" };
         }
         return this.handleWsBridgeEvent(message, sender);
+
+      case "overlay:get-state": {
+        if (!isBridgeTabSender(sender) || !this.isBoundTab(sender.tab?.id)) {
+          return { ok: false, error: "Overlay state is restricted to the bound game tab" };
+        }
+        return { ok: true, state: this.state };
+      }
+
+      case "overlay:reset-damage": {
+        if (!isBridgeTabSender(sender) || !this.isBoundTab(sender.tab?.id)) {
+          return { ok: false, error: "Overlay reset is restricted to the bound game tab" };
+        }
+        this.session.services.getDomain<CombatState>("combatState").reset();
+        this.session.invalidateProjection();
+        this.broadcast();
+        return { ok: true, state: this.state };
+      }
 
       default:
         // Bot RPC is for the popup / extension pages only — not content scripts.

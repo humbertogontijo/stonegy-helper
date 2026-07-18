@@ -1,4 +1,17 @@
-import { decodeBinaryMessage, isGoldBalance, isGroundItemUpdate, isMonsterLoot, isInventorySnapshot, isItemGrant, isMarketSnapshot } from "../../binary/decode";
+import {
+  decodeBinaryMessage,
+  isAutoAttack,
+  isCombatFloat,
+  isEntityMove,
+  isEntityPosition,
+  isGoldBalance,
+  isGroundItemUpdate,
+  isMonsterLoot,
+  isInventorySnapshot,
+  isItemGrant,
+  isMarketSnapshot,
+  isSpellCast,
+} from "../../binary/decode";
 import { marketSnapshotBodyToData } from "../../binary/market-snapshot";
 import { parseMessage, ReceiveMessageTypes, type StonegyMessage } from "../../protocol";
 import type { WireMessage } from "../transport";
@@ -70,6 +83,56 @@ export function normalizeWireMessage(wire: WireMessage): GameEvent[] {
         return [
           {
             kind: "market_snapshot_binary",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isCombatFloat(decoded)) {
+        return [
+          {
+            kind: "combat_float",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isSpellCast(decoded)) {
+        return [
+          {
+            kind: "spell_cast",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isAutoAttack(decoded)) {
+        return [
+          {
+            kind: "auto_attack",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isEntityMove(decoded)) {
+        return [
+          {
+            kind: "entity_move",
+            direction: "receive",
+            data: decoded.body.data,
+            raw: wire.data,
+          },
+        ];
+      }
+      if (isEntityPosition(decoded)) {
+        return [
+          {
+            kind: "entity_position",
             direction: "receive",
             data: decoded.body.data,
             raw: wire.data,

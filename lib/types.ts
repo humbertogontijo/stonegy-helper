@@ -135,6 +135,9 @@ export type {
   MarketProjection,
   QuestProjection,
   BlessProjection,
+  CombatProjection,
+  DamageEntityStats,
+  DamageElementStat,
 } from "./core/projections/types";
 
 import type {
@@ -147,6 +150,7 @@ import type {
   MarketProjection,
   QuestProjection,
   BlessProjection,
+  CombatProjection,
 } from "./core/projections/types";
 import type { DebugTelemetrySnapshot } from "./core/events/debug-telemetry";
 import type { Settings } from "./core/settings";
@@ -164,6 +168,7 @@ export interface BotState {
   market: MarketProjection;
   quests: QuestProjection;
   bless: BlessProjection;
+  combat: CombatProjection;
   playerState: PlayerState;
   playerStateDetail: string;
   /** Resolved preset for the selected hunt (configured settings, else live game). */

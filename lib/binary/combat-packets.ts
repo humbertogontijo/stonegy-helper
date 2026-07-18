@@ -1,3 +1,8 @@
+import {
+  parseAutoAttackCombatRecords,
+  parseCombatActors,
+  parseSpellCastCombatRecords,
+} from "./ability-combat-hits.ts";
 import type { BinaryReader } from "./reader.ts";
 import type {
   AutoAttackBody,
@@ -6,72 +11,31 @@ import type {
   SupportAbilityCastEffectTail,
 } from "./types.ts";
 
-const SPELL_EFFECT_RECORD_BYTES = 14;
-const AUTO_ATTACK_TARGET_BYTES = 8;
-const ABILITY_TARGET_BYTES = 9;
-const AUTO_ATTACK_TIMESTAMP_BYTES = 8;
-const SUPPORT_CAST_HEADER = [0x01, 0x01, 0x01, 0x00] as const;
+const SUPPORT_CAST_HEADER_LENGTH = 4;
+const MAX_STRING_LENGTH = 256;
 
-function decodeSpellEffectRecords(reader: BinaryReader, maxRecords?: number): SpellCastBody["effects"] {
-  const effects: SpellCastBody["effects"] = [];
-  const limit = maxRecords ?? Number.POSITIVE_INFINITY;
-
-  while (effects.length < limit && reader.remaining >= SPELL_EFFECT_RECORD_BYTES) {
-    const fields: number[] = [];
-    for (let index = 0; index < 7; index += 1) {
-      fields.push(reader.u16());
-    }
-    effects.push({ fields });
-  }
-
-  return effects;
-}
-
-function tryDecodeTrailingEffects(
-  reader: BinaryReader,
-  strings: string[]
-): AutoAttackBody | null {
-  const total = reader.remaining;
-  if (total < SPELL_EFFECT_RECORD_BYTES) {
-    return null;
-  }
-
-  const effectCount = Math.floor(total / SPELL_EFFECT_RECORD_BYTES);
-  const slack = total - effectCount * SPELL_EFFECT_RECORD_BYTES;
-  if (effectCount === 0 || slack > 2) {
-    return null;
-  }
-
-  const effects = decodeSpellEffectRecords(reader, effectCount);
-  if (slack > 0) {
-    reader.bytes(slack);
-  }
-
-  return { ...emptyAutoAttack(strings), effects };
-}
-
+/**
+ * spell_cast (0x1c): u8 stringCount + strings, u8 actorCount + actor records,
+ * u16 recordCount + combat records. See ability-combat-hits.ts for layouts.
+ */
 export function decodeSpellCastPacket(reader: BinaryReader): SpellCastBody {
   const strings = decodeLengthPrefixedStrings(reader);
-  const header = {
-    mode: reader.u8(),
-    effectId: reader.u16(),
-    fieldA: reader.u8(),
-    fieldB: reader.u8(),
-  };
-  const effects = decodeSpellEffectRecords(reader);
+  const actors = parseCombatActors(reader, strings);
+  const combatHits = parseSpellCastCombatRecords(reader, strings, actors);
 
-  if (reader.remaining === 8) {
-    reader.u64();
+  if (reader.remaining > 0) {
+    throw new RangeError(
+      `spell_cast frame has ${reader.remaining} unparsed trailing bytes`
+    );
   }
 
-  return { strings, header, effects };
+  return { strings, actors, combatHits };
 }
 
 /**
  * Types 0x12/0x19 ability frames branch on the leading discriminator byte:
- *   0x00 (type 0x19 only) → combat damage
- *   0x01–0x06             → u8 string-count + u16-length strings, then target/effect tail
- *   0x07+                 → consecutive u16-length strings (equipment-heavy casts)
+ *   0x00 (type 0x19 only) → combat_float (handled by decodeAutoAttackOrDamage)
+ *   otherwise             → u8 string count + strings, then combat records
  * Type 0x12 support casts use a fixed 4-byte 0x01 header before consecutive strings.
  */
 export function decodeAbilityCastPacket(
@@ -82,7 +46,7 @@ export function decodeAbilityCastPacket(
   const discriminator = reader.u8();
 
   if (discriminator === 0 && wireType === 0x19) {
-    throw new RangeError("Combat damage must be routed before ability cast decoding");
+    throw new RangeError("combat_float must be routed before ability cast decoding");
   }
 
   reader.seek(start);
@@ -94,111 +58,56 @@ export function decodeAbilityCastPacket(
   return decodeAutoAttackPacket(reader);
 }
 
+/**
+ * Support casts start with a 4-byte header (observed: 01 01 01 00 and
+ * 01 03 01 01) followed by a u16 length-prefixed string. Bytes 0 and 2 are
+ * always 0x01; validate the string length to avoid misrouting attack frames.
+ */
 function matchesSupportCastHeader(reader: BinaryReader): boolean {
-  if (reader.remaining < SUPPORT_CAST_HEADER.length) {
+  if (reader.remaining < SUPPORT_CAST_HEADER_LENGTH + 2) {
     return false;
   }
 
   const start = reader.position;
-  for (const expected of SUPPORT_CAST_HEADER) {
-    if (reader.u8() !== expected) {
-      reader.seek(start);
-      return false;
-    }
-  }
-
+  const byteA = reader.u8();
+  reader.u8();
+  const byteC = reader.u8();
+  reader.u8();
+  const firstStringLength = reader.u16();
   reader.seek(start);
-  return true;
+
+  return (
+    byteA === 0x01 &&
+    byteC === 0x01 &&
+    firstStringLength > 0 &&
+    firstStringLength <= MAX_STRING_LENGTH
+  );
 }
 
+/**
+ * auto_attack (0x19/0x12): u8 stringCount + strings, u16 recordCount + combat
+ * records. combat_float is the same record stream with an empty string table.
+ */
 export function decodeAutoAttackPacket(reader: BinaryReader): AutoAttackBody {
-  const strings = decodeAutoAttackStrings(reader);
+  const stringCount = reader.u8();
+  const strings: string[] = [];
+  for (let index = 0; index < stringCount; index += 1) {
+    strings.push(readBoundedString(reader));
+  }
 
   if (reader.remaining === 0) {
-    return emptyAutoAttack(strings);
+    return { strings, combatHits: [] };
   }
 
-  const trailingEffects = tryDecodeTrailingEffects(reader, strings);
-  if (trailingEffects) {
-    return trailingEffects;
+  const combatHits = parseAutoAttackCombatRecords(reader, strings);
+
+  if (reader.remaining > 0) {
+    throw new RangeError(
+      `auto_attack frame has ${reader.remaining} unparsed trailing bytes`
+    );
   }
 
-  const prefix = reader.u16();
-  const remainingAfterPrefix = reader.remaining;
-
-  if (remainingAfterPrefix === prefix * ABILITY_TARGET_BYTES) {
-    return {
-      strings,
-      targetCount: prefix,
-      timestamp: 0,
-      targets: readAbilityTargets(reader, prefix),
-      effects: [],
-    };
-  }
-
-  if (
-    prefix > 0 &&
-    remainingAfterPrefix === (prefix - 1) * ABILITY_TARGET_BYTES + AUTO_ATTACK_TARGET_BYTES
-  ) {
-    return {
-      strings,
-      targetCount: prefix,
-      timestamp: 0,
-      targets: readHybridAbilityTargets(reader, prefix),
-      effects: [],
-    };
-  }
-
-  if (
-    remainingAfterPrefix >= AUTO_ATTACK_TIMESTAMP_BYTES &&
-    remainingAfterPrefix - AUTO_ATTACK_TIMESTAMP_BYTES === prefix * AUTO_ATTACK_TARGET_BYTES
-  ) {
-    const timestamp = reader.u64();
-    return {
-      strings,
-      targetCount: prefix,
-      timestamp,
-      targets: readAutoAttackTargets(reader, prefix),
-      effects: [],
-    };
-  }
-
-  if (
-    remainingAfterPrefix >= AUTO_ATTACK_TIMESTAMP_BYTES &&
-    remainingAfterPrefix - AUTO_ATTACK_TIMESTAMP_BYTES === prefix * ABILITY_TARGET_BYTES
-  ) {
-    const targets = readAbilityTargets(reader, prefix);
-    const timestamp = reader.u64();
-    return {
-      strings,
-      targetCount: prefix,
-      timestamp,
-      targets,
-      effects: [],
-    };
-  }
-
-  const targets = readBatchedAbilityTargets(reader);
-  const timestamp = reader.remaining === AUTO_ATTACK_TIMESTAMP_BYTES ? reader.u64() : 0;
-
-  return {
-    strings,
-    targetCount: targets.length,
-    timestamp,
-    targets,
-    effects: [],
-    batchLead: prefix,
-  };
-}
-
-function readBatchedAbilityTargets(reader: BinaryReader): AutoAttackBody["targets"] {
-  const targets: AutoAttackBody["targets"] = [];
-
-  while (reader.remaining > AUTO_ATTACK_TIMESTAMP_BYTES) {
-    targets.push(readAbilityTarget(reader, targets.length, targets.length + 1));
-  }
-
-  return targets;
+  return { strings, combatHits };
 }
 
 export function decodeSupportAbilityCastPacket(reader: BinaryReader): SupportAbilityCastBody {
@@ -212,101 +121,6 @@ export function decodeSupportAbilityCastPacket(reader: BinaryReader): SupportAbi
   const effectTail = decodeSupportAbilityCastEffectTail(reader);
 
   return { header, strings, effectTail, rawTail: new Uint8Array(0) };
-}
-
-function readAutoAttackTargets(reader: BinaryReader, targetCount: number): AutoAttackBody["targets"] {
-  const targets: AutoAttackBody["targets"] = [];
-
-  for (let index = 0; index < targetCount; index += 1) {
-    if (reader.remaining < AUTO_ATTACK_TARGET_BYTES) {
-      throw new RangeError(
-        `Auto-attack target ${index + 1}/${targetCount} needs ${AUTO_ATTACK_TARGET_BYTES} bytes, but only ${reader.remaining} remain`
-      );
-    }
-
-    targets.push({
-      attackerIndex: reader.u8(),
-      effectType: reader.u8(),
-      paramA: reader.u16(),
-      paramB: reader.u16(),
-      paramC: reader.u16(),
-    });
-  }
-
-  return targets;
-}
-
-function readHybridAbilityTargets(
-  reader: BinaryReader,
-  targetCount: number
-): AutoAttackBody["targets"] {
-  const targets: AutoAttackBody["targets"] = [];
-
-  for (let index = 0; index < targetCount - 1; index += 1) {
-    targets.push(readAbilityTarget(reader, index, targetCount));
-  }
-
-  if (reader.remaining < AUTO_ATTACK_TARGET_BYTES) {
-    throw new RangeError(
-      `Final auto-attack target needs ${AUTO_ATTACK_TARGET_BYTES} bytes, but only ${reader.remaining} remain`
-    );
-  }
-
-  targets.push({
-    attackerIndex: reader.u8(),
-    effectType: reader.u8(),
-    paramA: reader.u16(),
-    paramB: reader.u16(),
-    paramC: reader.u16(),
-  });
-
-  return targets;
-}
-
-function readAbilityTarget(
-  reader: BinaryReader,
-  index: number,
-  targetCount: number
-): AutoAttackBody["targets"][number] {
-  if (reader.remaining < ABILITY_TARGET_BYTES) {
-    throw new RangeError(
-      `Ability target ${index + 1}/${targetCount} needs ${ABILITY_TARGET_BYTES} bytes, but only ${reader.remaining} remain`
-    );
-  }
-
-  return {
-    attackerIndex: reader.u8(),
-    effectType: reader.u8(),
-    paramA: reader.u16(),
-    paramB: reader.u16(),
-    paramC: reader.u16(),
-    tail: reader.u8(),
-  };
-}
-
-function readAbilityTargets(reader: BinaryReader, targetCount: number): AutoAttackBody["targets"] {
-  const targets: AutoAttackBody["targets"] = [];
-
-  for (let index = 0; index < targetCount; index += 1) {
-    targets.push(readAbilityTarget(reader, index, targetCount));
-  }
-
-  return targets;
-}
-
-function decodeAutoAttackStrings(reader: BinaryReader): string[] {
-  const lead = reader.u8();
-
-  if (lead >= 7) {
-    return decodeConsecutiveLengthPrefixedStrings(reader);
-  }
-
-  const strings: string[] = [];
-  for (let index = 0; index < lead; index += 1) {
-    strings.push(reader.stringAsciiLengthPrefixed());
-  }
-
-  return strings;
 }
 
 function decodeSupportAbilityCastEffectTail(
@@ -340,12 +154,20 @@ function decodeSupportAbilityCastEffectTail(
   };
 }
 
+function readBoundedString(reader: BinaryReader): string {
+  const length = reader.u16();
+  if (length === 0 || length > MAX_STRING_LENGTH) {
+    throw new RangeError(`Implausible combat frame string length: ${length}`);
+  }
+  return new TextDecoder().decode(reader.bytes(length));
+}
+
 function decodeLengthPrefixedStrings(reader: BinaryReader): string[] {
   const stringCount = reader.u8();
   const strings: string[] = [];
 
   for (let index = 0; index < stringCount; index += 1) {
-    strings.push(reader.stringAsciiLengthPrefixed());
+    strings.push(readBoundedString(reader));
   }
 
   return strings;
@@ -356,7 +178,7 @@ function decodeConsecutiveLengthPrefixedStrings(reader: BinaryReader): string[] 
 
   while (reader.remaining >= 2) {
     const length = reader.u16();
-    if (length === 0 || length > 256 || reader.remaining < length) {
+    if (length === 0 || length > MAX_STRING_LENGTH || reader.remaining < length) {
       reader.seek(reader.position - 2);
       break;
     }
@@ -369,14 +191,4 @@ function decodeConsecutiveLengthPrefixedStrings(reader: BinaryReader): string[] 
   }
 
   return strings;
-}
-
-function emptyAutoAttack(strings: string[]): AutoAttackBody {
-  return {
-    strings,
-    targetCount: 0,
-    timestamp: 0,
-    targets: [],
-    effects: [],
-  };
 }

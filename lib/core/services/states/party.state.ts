@@ -1,13 +1,17 @@
 import type { PartyLootSplitter } from "../../../protocol-messages";
 import { ReceiveMessageTypes } from "../../../protocol";
-import { parsePartyCharacterFields, readId } from "../../../domain/party/fields";
+import {
+  parsePartyCharacterFields,
+  parsePartyMembers,
+  readId,
+} from "../../../domain/party/fields";
 import { readPartyMemberCount } from "../../humanize";
 import type { GameEvent } from "../../events/types";
 import { asStonegyMessage } from "../../events/normalize";
 import {
   reconcileLootSplitProgress,
 } from "../../projections/loot-split-progress";
-import type { PartyProjection } from "../../projections/types";
+import type { PartyMemberProjection, PartyProjection } from "../../projections/types";
 import { DomainState, type ServiceContext } from "../service";
 import type { DomainStateId } from "../types";
 
@@ -17,6 +21,7 @@ function defaultParty(): PartyProjection {
     currentHuntId: null,
     partyLeaderId: null,
     partyMemberCount: null,
+    partyMembers: [],
     partySnapshotSynced: false,
     lastSnapshotAt: null,
     readyCheckId: null,
@@ -73,6 +78,10 @@ export class PartyState extends DomainState {
 
   get partyMemberCount(): number | null {
     return this.party.partyMemberCount;
+  }
+
+  get partyMembers(): PartyMemberProjection[] {
+    return this.party.partyMembers;
   }
 
   get partySnapshotSynced(): boolean {
@@ -155,6 +164,7 @@ export class PartyState extends DomainState {
       }
 
       const memberCount = readPartyMemberCount(party);
+      const partyMembers = parsePartyMembers(party);
       const nextSplitter = party?.lootSplitter ?? null;
       const readyCheckId =
         typeof party?.readyCheck?.id === "string" ? party.readyCheck.id : null;
@@ -165,6 +175,7 @@ export class PartyState extends DomainState {
         currentHuntId: typeof party?.currentHuntId === "number" ? party.currentHuntId : null,
         partyLeaderId: readId(party?.leaderId) ?? this.party.partyLeaderId,
         partyMemberCount: memberCount ?? this.party.partyMemberCount,
+        partyMembers,
         readyCheckId,
         lastSnapshotAt: Date.now(),
         partyLootSplitter: nextSplitter,

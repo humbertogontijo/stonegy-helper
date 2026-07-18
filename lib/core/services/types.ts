@@ -8,7 +8,8 @@ export type DomainStateId =
   | "inventoryState"
   | "marketState"
   | "tasksState"
-  | "blessState";
+  | "blessState"
+  | "combatState";
 
 /** Registry key for any registered service (domain or core). */
 export type ServiceId = FeatureId | DomainStateId;

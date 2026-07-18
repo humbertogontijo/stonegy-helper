@@ -1565,32 +1565,178 @@ export const killEventBodySchema = strictObject({
 });
 export type KillEventBody = z.infer<typeof killEventBodySchema>;
 
-export const entityUpdateBodySchema = strictObject({
-  subType: z.number(),
-  indexA: z.number(),
-  indexB: z.number(),
-  entityRefs: z.array(entityRefSchema),
+/**
+ * One cooldown record on type 0x08. Expiries are absolute unix-ms server
+ * timestamps (they all sit within seconds of the pong `serverTime`).
+ *
+ * Observed `groupId`s: 1 = attack spells, 2 = healing spells, 3 = potions.
+ * `slotA`/`slotB` identify the spell/slot inside the group; 0xff appears as a
+ * group-wide/global marker and slotB=0 means no second expiry follows.
+ * Live frames pair the specific spell cooldown (A) with the group cooldown (B),
+ * e.g. attack casts show now+4s / now+2s.
+ */
+export const cooldownUpdateRecordSchema = strictObject({
+  groupId: z.number(),
+  slotA: z.number(),
+  slotB: z.number(),
+  /** Unix ms when slotA's cooldown expires. */
+  expiresAtA: z.number(),
+  /** Unix ms when slotB's cooldown expires; present when slotB != 0. */
+  expiresAtB: z.number().optional(),
 });
-export type EntityUpdateBody = z.infer<typeof entityUpdateBodySchema>;
+export type CooldownUpdateRecord = z.infer<typeof cooldownUpdateRecordSchema>;
 
-export const vitalDeltaBodySchema = looseObject({
-  targetIndex: z.number(),
-  statKind: z.number(),
-  sourceIndex: z.number(),
-  delta: z.number(),
-  extra: z.number().optional(),
-  tail: z.number().optional(),
+/** Type 0x08 — spell/potion cooldown sync (formerly misread as entity refs). */
+export const cooldownUpdateBodySchema = strictObject({
+  records: z.array(cooldownUpdateRecordSchema),
 });
-export type VitalDeltaBody = z.infer<typeof vitalDeltaBodySchema>;
+export type CooldownUpdateBody = z.infer<typeof cooldownUpdateBodySchema>;
 
-export const combatDamageBodySchema = strictObject({
-  attackerIndex: z.number(),
-  targetIndex: z.number(),
-  damageKind: z.number(),
+export const vitalsFieldSchema = strictObject({
+  bit: z.number(),
+  value: z.number(),
+});
+export type VitalsField = z.infer<typeof vitalsFieldSchema>;
+
+export const vitalsRecordSchema = strictObject({
+  entityIndex: z.number(),
+  fieldMask: z.number(),
+  fields: z.array(vitalsFieldSchema),
+});
+export type VitalsRecord = z.infer<typeof vitalsRecordSchema>;
+
+/** Type 0x09 — masked per-entity vital updates (variable-length records). */
+export const vitalsBodySchema = strictObject({
+  records: z.array(vitalsRecordSchema),
+});
+export type VitalsBody = z.infer<typeof vitalsBodySchema>;
+
+/**
+ * One party-player floating-number event on type 0x19. See `decodeCombatFloat`
+ * for layout and `kind` packing (hiByte school, loByte bit7 restore vs damage).
+ *
+ * `category`: 0 = damage (or mana restore when kind bit7 set), 2 = HP heal,
+ * 4 = magic-shield absorption (mana).
+ */
+export const combatFloatHitSchema = strictObject({
+  category: z.number(),
+  /** Packed school/flags — not a flat enum; see decodeCombatFloat docs. */
+  kind: z.number(),
   amount: z.number(),
-  flag: z.number(),
+  /** Affected player's tile position (matches hunt:update_players). */
+  tileX: z.number(),
+  tileY: z.number(),
+  /** Matches hunt:update_players runtimePlayerId. */
+  runtimePlayerId: z.number(),
 });
-export type CombatDamageBody = z.infer<typeof combatDamageBodySchema>;
+export type CombatFloatHit = z.infer<typeof combatFloatHitSchema>;
+
+/**
+ * Type 0x19 disc-0x00 frame: count + per-player floating-number records.
+ * Damage taken, heals, mana restore, shield absorption — not attacker→target.
+ */
+export const combatFloatBodySchema = strictObject({
+  hits: z.array(combatFloatHitSchema),
+});
+export type CombatFloatBody = z.infer<typeof combatFloatBodySchema>;
+
+/** School / element nibble from a combat float `kind` word. */
+export function combatFloatSchool(kind: number): number {
+  return (kind >> 8) & 0xff;
+}
+
+/** True when `kind` marks a restore/heal popup (mana heal uses lo 0x84). */
+export function combatFloatIsRestore(kind: number): boolean {
+  return (kind & 0x80) !== 0;
+}
+
+/** HP damage popup on a party player (excludes mana school and restores). */
+export function isCombatFloatHpDamage(hit: Pick<CombatFloatHit, "category" | "kind">): boolean {
+  return hit.category === 0 && combatFloatSchool(hit.kind) !== 5 && !combatFloatIsRestore(hit.kind);
+}
+
+/** Magic-shield absorption popup (Utamo Vita) — damage paid from mana. */
+export function isCombatFloatMagicShield(hit: Pick<CombatFloatHit, "category">): boolean {
+  return hit.category === 4;
+}
+
+/**
+ * Damage taken for the analyzer: HP hits plus magic-shield absorption.
+ * Mana restores and HP heals are excluded.
+ */
+export function isCombatFloatTakenDamage(
+  hit: Pick<CombatFloatHit, "category" | "kind">
+): boolean {
+  return isCombatFloatHpDamage(hit) || isCombatFloatMagicShield(hit);
+}
+
+/** HP heal popup (exura family). */
+export function isCombatFloatHpHeal(hit: Pick<CombatFloatHit, "category" | "kind">): boolean {
+  return hit.category === 2;
+}
+
+/**
+ * Actor record on spell_cast (0x1c) frames — the attacker plus ability (and
+ * weapon for 0x1f swing actors). Monster hit rows reference this list.
+ */
+export const combatActorSchema = strictObject({
+  tag: z.union([z.literal(0x0f), z.literal(0x1f)]),
+  runtimePlayerId: z.number(),
+  abilityIndex: z.number(),
+  abilityName: z.string().optional(),
+  weaponIndex: z.number().optional(),
+  weaponName: z.string().optional(),
+});
+export type CombatActorRecord = z.infer<typeof combatActorSchema>;
+
+/** Player float row embedded in spell_cast/auto_attack frames. */
+export const playerCombatHitSchema = strictObject({
+  target: z.literal("player"),
+  tag: z.number(),
+  category: z.number(),
+  kind: z.number(),
+  school: z.number(),
+  amount: z.number(),
+  tileX: z.number(),
+  tileY: z.number(),
+  runtimePlayerId: z.number(),
+  isRestore: z.boolean(),
+});
+
+/** Monster hit row with resolved attacker/ability/monster names. */
+export const monsterCombatHitSchema = strictObject({
+  target: z.literal("monster"),
+  tag: z.number(),
+  kind: z.number(),
+  school: z.number(),
+  amount: z.number(),
+  tileX: z.number(),
+  tileY: z.number(),
+  monsterId: z.number(),
+  remainingHp: z.number(),
+  attackerRuntimePlayerId: z.number().optional(),
+  abilityName: z.string().optional(),
+  weaponName: z.string().optional(),
+  monsterName: z.string().optional(),
+});
+
+export const abilityCombatHitSchema = z.discriminatedUnion("target", [
+  playerCombatHitSchema,
+  monsterCombatHitSchema,
+]);
+
+/** Type 0x1c spell_cast: strings + actor list + attributed combat records. */
+export const spellCastBodySchema = strictObject({
+  strings: z.array(z.string()),
+  actors: z.array(combatActorSchema),
+  combatHits: z.array(abilityCombatHitSchema),
+});
+
+/** Types 0x19/0x12 attack frames: strings + combat records (inline attacker). */
+export const autoAttackBodySchema = strictObject({
+  strings: z.array(z.string()),
+  combatHits: z.array(abilityCombatHitSchema),
+});
 
 export const statusEffectBodySchema = strictObject({
   mode: z.number(),
@@ -1670,8 +1816,8 @@ export const binaryPayloadSchemas: Partial<Record<number, z.ZodType>> = {
   0x02: huntEntitySpawnBodySchema, // HuntEntitySpawn
   0x05: huntAnalyzerSnapshotBodySchema, // HuntAnalyzerSnapshot
   0x06: killEventBodySchema, // KillEvent
-  0x08: entityUpdateBodySchema, // EntityUpdate
-  // 0x09 VitalDelta — multiplexed (vital_delta | combat_damage); validated per-kind below
+  0x08: cooldownUpdateBodySchema, // CooldownUpdate
+  0x09: vitalsBodySchema, // Vitals — masked per-entity vital updates
   0x0a: decodedHuntFrameBodySchema, // HuntLoot — body IS the discriminated union
   0x0b: analyzerStatsBodySchema, // AnalyzerStats
   0x0c: counterTripletBodySchema, // CounterTriplet
@@ -1680,12 +1826,13 @@ export const binaryPayloadSchemas: Partial<Record<number, z.ZodType>> = {
   0x15: xpGainBodySchema, // XpGain
   0x16: sessionMetricBodySchema, // SessionMetric
   0x18: statusEffectBodySchema, // StatusEffect
-  // 0x19 AutoAttack — multiplexed (combat_damage | auto_attack | support_ability_cast)
+  // 0x19 AutoAttack / 0x12 AbilityCast — multiplexed (combat_float | auto_attack | support_ability_cast)
   0x1a: groundItemUpdateBodySchema, // GroundItemUpdate
+  0x1c: spellCastBodySchema, // SpellCast
 };
 
-/** Per-kind schemas for multiplexed binary types (VitalDelta 0x09, AutoAttack 0x19). */
+/** Per-kind schemas for multiplexed binary types (AutoAttack 0x19 / AbilityCast 0x12). */
 export const binaryBodyKindSchemas: Partial<Record<string, z.ZodType>> = {
-  vital_delta: vitalDeltaBodySchema,
-  combat_damage: combatDamageBodySchema,
+  combat_float: combatFloatBodySchema,
+  auto_attack: autoAttackBodySchema,
 };

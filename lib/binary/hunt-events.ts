@@ -1,11 +1,11 @@
 import { BinaryReader } from "./reader.ts";
 import type {
   AnalyzerStatsBody,
-  CombatDamageBody,
+  CombatFloatBody,
   CounterTripletBody,
   DecodedHuntFrameBody,
   EntityRef,
-  EntityUpdateBody,
+  CooldownUpdateBody,
   EntityUuidListBody,
   GroundItemUpdateBody,
   MonsterLootBody,
@@ -22,7 +22,7 @@ import type {
   PlayerVitalsBody,
   SessionMetricBody,
   StatusEffectBody,
-  VitalDeltaBody,
+  VitalsBody,
   XpGainBody,
 } from "../protocol-messages.ts";
 
@@ -175,57 +175,112 @@ export function readEntityRef(reader: BinaryReader): EntityRef {
   };
 }
 
-export function decodeEntityUpdate(reader: BinaryReader): EntityUpdateBody {
-  const subType = reader.u8();
-  const indexA = reader.u16();
-  const indexB = reader.u16();
-  const entityRefs: EntityRef[] = [];
+/**
+ * Type 0x08 — spell/potion cooldown sync:
+ *   u16 recordCount
+ *   recordCount × {
+ *     u8  groupId,       // observed: 1 attack spells, 2 healing spells, 3 potions
+ *     u8  slotA,         // spell/slot id inside the group; 0xff = group/global
+ *     u8  slotB,         // 0 = no second expiry follows
+ *     u64 expiresAtA,    // unix ms
+ *     u64 expiresAtB     // unix ms, only when slotB != 0
+ *   }
+ *
+ * Verified against a live HAR: every u64 is a unix-ms timestamp near the pong
+ * `serverTime`; potion rows (group 3) land right after gold ticks with ~1s
+ * expiry, heal rows track exura casts (~1s), and attack rows pair the spell
+ * cooldown (+2s/+4s) with the group cooldown (+2s). Bootstrap frames sync
+ * outstanding cooldowns using slotA=0xff plus per-slot expiries in B.
+ */
+export function decodeCooldownUpdate(reader: BinaryReader): CooldownUpdateBody {
+  const recordCount = reader.u16();
+  const records: CooldownUpdateBody["records"] = [];
 
-  while (reader.remaining >= 8) {
-    entityRefs.push(readEntityRef(reader));
+  for (let i = 0; i < recordCount; i++) {
+    const groupId = reader.u8();
+    const slotA = reader.u8();
+    const slotB = reader.u8();
+    const expiresAtA = reader.u64Safe();
+
+    records.push(
+      slotB !== 0
+        ? { groupId, slotA, slotB, expiresAtA, expiresAtB: reader.u64Safe() }
+        : { groupId, slotA, slotB, expiresAtA }
+    );
   }
 
-  return { subType, indexA, indexB, entityRefs };
+  return { records };
 }
 
-/** Type 0x09 full frame: u8 target, u16 statKind, u16 source, i32 delta, u32 extra (13 bytes). */
-export function decodeVitalDelta(reader: BinaryReader): VitalDeltaBody {
-  const targetIndex = reader.u8();
-  const statKind = reader.u16();
-  const sourceIndex = reader.u16();
-  const delta = reader.i32();
-  const extra = reader.u32();
+/**
+ * Type 0x09 — masked per-entity vital updates:
+ *   u8 recordCount
+ *   recordCount × { u8 entityIndex, u8 fieldMask, u32 value[popcount(mask)] }
+ * Values are absolute current vitals (bit0 ≈ HP, bit2 ≈ mana), not deltas.
+ */
+export function decodeVitals(reader: BinaryReader): VitalsBody {
+  const recordCount = reader.u8();
+  const records: VitalsBody["records"] = [];
 
-  return { targetIndex, statKind, sourceIndex, delta, extra };
+  for (let i = 0; i < recordCount; i++) {
+    const entityIndex = reader.u8();
+    const fieldMask = reader.u8();
+    const fields: VitalsBody["records"][number]["fields"] = [];
+
+    for (let bit = 0; bit < 8; bit++) {
+      if ((fieldMask & (1 << bit)) !== 0) {
+        fields.push({ bit, value: reader.u32() });
+      }
+    }
+
+    records.push({ entityIndex, fieldMask, fields });
+  }
+
+  return { records };
 }
 
-export function decodeCombatDamage(reader: BinaryReader): CombatDamageBody {
-  const attackerIndex = reader.u8();
-  reader.u8();
-  const targetIndex = reader.u8();
+/**
+ * Type 0x19 combat float frame (after the 0x00 discriminator):
+ *   u16 hitCount
+ *   hitCount × {
+ *     u8  category,          // 0 damage(/mana restore), 2 HP heal, 4 magic-shield
+ *     u16 kind,              // (school << 8) | flags; bit7 of lo = restore
+ *     u16 amount,
+ *     i8  tileX, i8 tileY,   // affected player's tile (matches hunt:update_players)
+ *     u8  runtimePlayerId    // matches hunt:update_players runtimePlayerId
+ *   }
+ *
+ * Party-player floating numbers only (damage taken, heals, mana restore, shield
+ * absorption) — not attacker→target monster damage.
+ *
+ * `kind` packing `(hiByte << 8) | loByte`:
+ *   - hiByte ≈ school / element (observed):
+ *       0x01 energy, 0x02 fire, 0x03 holy, 0x04 physical,
+ *       0x05 mana, 0x06 life drain / heal (cat 2), 0x08 ice
+ *       0x07 / 0x09 still unlabeled on floats
+ *   - loByte ≈ flags + base (base 0x04 in all captures so far):
+ *       bit7 set   → restore (mana heal uses lo 0x84)
+ *       bit7 clear → damage / non-restore
+ *
+ * `category` 4 is magic-shield absorption (Utamo Vita) — damage paid from
+ * mana. The `kind` hi byte still carries the incoming attack's element.
+ */
+export function decodeCombatFloat(reader: BinaryReader): CombatFloatBody {
+  const hitCount = reader.u16();
+  const hits: CombatFloatBody["hits"] = [];
 
-  return {
-    attackerIndex,
-    targetIndex,
-    damageKind: reader.u16(),
-    amount: reader.u32(),
-    flag: reader.u8(),
-  };
-}
+  for (let i = 0; i < hitCount; i++) {
+    hits.push({
+      category: reader.u8(),
+      kind: reader.u16(),
+      amount: reader.u16(),
+      tileX: reader.i8(),
+      tileY: reader.i8(),
+      runtimePlayerId: reader.u8(),
+    });
+  }
 
-/** Type 0x09 short frame: u8 indices + u16 damageKind + u16 amount (no flag). */
-export function decodeCompactCombatDamage(reader: BinaryReader): CombatDamageBody {
-  const attackerIndex = reader.u8();
-  reader.u8();
-  const targetIndex = reader.u8();
-
-  return {
-    attackerIndex,
-    targetIndex,
-    damageKind: reader.u16(),
-    amount: reader.u16(),
-    flag: 0,
-  };
+  return { hits };
 }
 
 const HUNT_ANALYZER_PARTY_SCAN_START = 0x88;

@@ -46,11 +46,21 @@ export interface PartyLootSplitHistoryEntry {
   transferCount: number;
 }
 
+/** Party roster row used for online/offline auto-hunt gating. */
+export interface PartyMemberProjection {
+  id: string | null;
+  name: string | null;
+  /** `null` when the snapshot omitted the field. */
+  isOnline: boolean | null;
+}
+
 export interface PartyProjection {
   partyStatus: string | null;
   currentHuntId: number | null;
   partyLeaderId: string | null;
   partyMemberCount: number | null;
+  /** Latest party:snapshot members (empty when solo / no party). */
+  partyMembers: PartyMemberProjection[];
   partySnapshotSynced: boolean;
   lastSnapshotAt: number | null;
   /** Active party ready-check id while members confirm (null when none). */
@@ -122,6 +132,32 @@ export interface BlessProjection {
   lastSnapshotAt: number | null;
 }
 
+export interface DamageElementStat {
+  element: number;
+  label: string;
+  amount: number;
+  /** Share of the parent dealt/taken total, 0–100. */
+  percent: number;
+}
+
+export interface DamageEntityStats {
+  entityIndex: number;
+  name: string;
+  dealtSum: number;
+  dealtMaxDps: number;
+  takenSum: number;
+  takenMaxDps: number;
+  /** Sorted descending by amount. */
+  dealtByElement: DamageElementStat[];
+  takenByElement: DamageElementStat[];
+}
+
+export interface CombatProjection {
+  entities: DamageEntityStats[];
+  startedAt: number | null;
+  updatedAt: number | null;
+}
+
 export interface SessionView {
   connection: ConnectionProjection;
   character: CharacterProjection;
@@ -132,6 +168,7 @@ export interface SessionView {
   market: MarketProjection;
   quests: QuestProjection;
   bless: BlessProjection;
+  combat: CombatProjection;
   playerState: PlayerState;
   playerStateDetail: string;
   battlePreset: BattlePreset;

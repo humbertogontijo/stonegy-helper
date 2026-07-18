@@ -1,5 +1,32 @@
 import { hasAllBlessings, nextAffordableBlessing } from "../bless";
 
+/**
+ * Hunt finish reasons that permanently stop auto-hunt / tasker.
+ *
+ * - `insufficient_gold` / `stamina_depleted` — cannot safely continue.
+ * - `insufficient_capacity` is NOT terminal — sell loot then auto-restart.
+ */
+export const TERMINAL_HUNT_FINISH_REASONS = [
+  "insufficient_gold",
+  "stamina_depleted",
+] as const;
+
+export type TerminalHuntFinishReason = (typeof TERMINAL_HUNT_FINISH_REASONS)[number];
+
+/** True when `hunt_finished.reason` should disable auto-hunt / tasker (no restart). */
+export function isTerminalHuntFinishReason(
+  reason: unknown
+): reason is TerminalHuntFinishReason {
+  return (
+    reason === "insufficient_gold" || reason === "stamina_depleted"
+  );
+}
+
+/** Game finish-by-capacity — bag full; sell then continue when auto-hunt is armed. */
+export function isCapacityHuntFinishReason(reason: unknown): boolean {
+  return reason === "insufficient_capacity";
+}
+
 /** Settings slice needed for auto-hunt restart eligibility. */
 export type AutoHuntRestartSettings = {
   autoHuntEnabled: boolean;
@@ -53,6 +80,8 @@ export type CanRestartHuntInput = {
    *  startHuntInternal via ensureAllBlessingsForHunt so a missing snapshot after reload
    *  can still sync. Optional here for callers that already synced. */
   hasAllBlessings?: boolean;
+  /** When false, wait for offline party members (PARTY_SNAPSHOT will retry). */
+  allPartyMembersOnline?: boolean;
 };
 
 /** Shared restart eligibility for HUNT_FINISHED / PARTY_SNAPSHOT auto-restart. */
@@ -75,6 +104,9 @@ export function canRestartHunt(input: CanRestartHuntInput): boolean {
   if (input.hasAllBlessings === false) {
     return false;
   }
+  if (input.allPartyMembersOnline === false) {
+    return false;
+  }
   return true;
 }
 
@@ -93,6 +125,8 @@ export type CanAutoHuntClaimIdleInput = {
   goldCoins: number | null | undefined;
   blessings: Array<{ owned: boolean; cost: number }>;
   ownedCount: number | null | undefined;
+  /** When false, wait for offline party members instead of claiming idle. */
+  allPartyMembersOnline?: boolean;
 };
 
 export function canAutoHuntClaimIdle(input: CanAutoHuntClaimIdleInput): boolean {
@@ -103,6 +137,9 @@ export function canAutoHuntClaimIdle(input: CanAutoHuntClaimIdleInput): boolean 
     return false;
   }
   if (input.selectedHuntId == null || !input.huntStartable) {
+    return false;
+  }
+  if (input.allPartyMembersOnline === false) {
     return false;
   }
 

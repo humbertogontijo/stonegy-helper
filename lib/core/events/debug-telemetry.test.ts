@@ -792,7 +792,7 @@ describe("debug-telemetry", () => {
     expect(snapshot.events[0]?.unknownType).toBeUndefined();
   });
 
-  it("records compact type-0x09 combat hits without decode failures", () => {
+  it("records type-0x09 vital updates without decode failures", () => {
     const snapshot = emptyDebugTelemetry();
 
     recordDebugWireMessage(
@@ -805,9 +805,32 @@ describe("debug-telemetry", () => {
     );
 
     expect(snapshot.unknownEvents).toHaveLength(0);
-    expect(snapshot.events[0]?.eventKey).toBe("binary:combat_damage");
+    expect(snapshot.events[0]?.eventKey).toBe("binary:vitals");
     expect(snapshot.events[0]?.parseFailed).toBeUndefined();
-    expect(snapshot.events[0]?.summary).toBe("damage(0 from 1 to 1)");
+    expect(snapshot.events[0]?.summary).toBe("vitals(1 records 1:{bit0=1540})");
+  });
+
+  it("keeps nested vitals field values when serializing parsed events", () => {
+    const snapshot = emptyDebugTelemetry();
+
+    recordDebugWireMessage(
+      {
+        direction: "receive",
+        opcode: 2,
+        data: "U0cFCQMCBG4MAAABBMcDAAADBIMPAAA=",
+      },
+      snapshot
+    );
+
+    const parsed = snapshot.events[0]?.parsed as {
+      body: { data: { records: unknown[] } };
+    };
+
+    expect(parsed.body.data.records).toEqual([
+      { entityIndex: 2, fieldMask: 4, fields: [{ bit: 2, value: 3182 }] },
+      { entityIndex: 1, fieldMask: 4, fields: [{ bit: 2, value: 967 }] },
+      { entityIndex: 3, fieldMask: 4, fields: [{ bit: 2, value: 3971 }] },
+    ]);
   });
 
   it("records compact type-0x0c counter triplets without decode failures", () => {
@@ -827,14 +850,14 @@ describe("debug-telemetry", () => {
     expect(snapshot.events[0]?.parseFailed).toBeUndefined();
   });
 
-  it("records equipment-heavy auto attacks with a 0x07 string-layout lead byte", () => {
+  it("records equipment-heavy auto attacks without decode failures", () => {
     const snapshot = emptyDebugTelemetry();
 
     recordDebugWireMessage(
       {
         direction: "receive",
         opcode: 2,
-        data: "U0cFGQcLAEF1dG8tQXR0YWNrHgAvaW52ZW50b3J5L05pZ2h0bWFyZV9CbGFkZS5naWYVAFNvdWwtQnJva2VuIEhhcmJpbmdlch4AL2ludmVudG9yeS9XYW5kX09mX0luZmVybm8uZ2lmIgAvaW52ZW50b3J5L0RyYWdvbmljX01haWwuZ2lm",
+        data: "U0cFGQULAEF1dG8tQXR0YWNrGgAvaW52ZW50b3J5L0dub21lX1N3b3JkLmdpZhMAVHJ1ZSBEYXduZmlyZSBBc3VyYRoAL2ludmVudG9yeS9TcGlrZV9Td29yZC5naWYiAC9pbnZlbnRvcnkvRHJlYW1fQmxvc3NvbV9TdGFmZi5naWYFAPgPCA0AAQCNAi8EAQIAAQL4DwRXAAEAjQIvBAECAAEC+A8IAwABAI0CLAQDAgADAvgPBEMAAQCNAukDBAIABAIABAhyAQAAAQ==",
       },
       snapshot
     );

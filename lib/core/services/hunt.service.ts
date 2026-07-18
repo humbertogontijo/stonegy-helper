@@ -5,9 +5,17 @@ import {
   canRestartHunt,
   enableAutoHuntBlockReason,
   isAutoHuntRestartEnabled as isAutoHuntRestartEnabledGuard,
+  isCapacityHuntFinishReason,
   isPostHuntLootBlocking,
+  isTerminalHuntFinishReason,
   shouldDeferHuntRestartForLootFinish,
+  type TerminalHuntFinishReason,
 } from "../../domain/hunt/guards";
+import {
+  areAllPartyMembersOnline,
+  offlinePartyMembers,
+  waitingForPartyOnlineMessage,
+} from "../../domain/party/online";
 import { isLootSellEnabled } from "../../domain/loot-sell";
 import { featureCooldown, PIPELINE_COOLDOWNS, delay } from "../commands/cooldown";
 import { isPartyLeader, partyIdentity } from "../humanize";
@@ -90,6 +98,19 @@ export class HuntService extends Service {
 
   private playerHasAllBlessings(): boolean {
     return hasAllBlessings(this.blessState.projection());
+  }
+
+  /** Other party members who are explicitly offline (solo parties never block). */
+  private offlinePartyMembers() {
+    return offlinePartyMembers(this.partyState.partyMembers, {
+      excludeCharacterId: this.sessionState.characterId,
+    });
+  }
+
+  private allPartyMembersOnline(): boolean {
+    return areAllPartyMembersOnline(this.partyState.partyMembers, {
+      excludeCharacterId: this.sessionState.characterId,
+    });
   }
 
   /**
@@ -195,12 +216,11 @@ export class HuntService extends Service {
       this.reconcileAwaitingReadyFromSnapshot();
     }
 
-    // Terminal hunt-finish reasons stop automation even when tasker owns the hunt loop
-    // (isAutoHuntRestartEnabled is false while autoTaskerEnabled).
+    // Terminal reasons (gold / stamina) stop automation even when tasker owns the loop.
+    // insufficient_capacity is NOT terminal — sell loot then auto-restart below.
     if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
-      const reason =
-        typeof message.data?.reason === "string" ? message.data.reason : undefined;
-      if (reason === "insufficient_gold" || reason === "stamina_depleted") {
+      const reason = message.data?.reason;
+      if (isTerminalHuntFinishReason(reason)) {
         this.ctx.session.deferFromWire(() =>
           this.run("hunt", () => this.handleTerminalHuntFinishReason(reason))
         );
@@ -335,7 +355,8 @@ export class HuntService extends Service {
       !isInActiveTraining(this.ctx.session) ||
       !isAutoHuntRestartEnabledGuard(this.ctx.settings.get()) ||
       !options.isLeader ||
-      !options.huntValid
+      !options.huntValid ||
+      !this.allPartyMembersOnline()
     ) {
       return { ok: true };
     }
@@ -375,6 +396,7 @@ export class HuntService extends Service {
         autoTaskerEnabled: settings.autoTaskerEnabled,
         handlingLoot,
         alreadyHunting: alreadyHunting || awaitingReady,
+        allPartyMembersOnline: this.allPartyMembersOnline(),
         // Blessings are synced/bought inside startHuntInternal — don't block restart
         // when the snapshot is still missing after a game reload.
       });
@@ -385,6 +407,7 @@ export class HuntService extends Service {
       trace.guard("hunt_valid", huntValid);
       trace.guard("not_already_hunting", !alreadyHunting);
       trace.guard("not_awaiting_ready", !awaitingReady);
+      trace.guard("party_members_online", this.allPartyMembersOnline());
       trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
       if (!canRestart || selectedHuntId == null || !huntValid) {
@@ -416,11 +439,12 @@ export class HuntService extends Service {
   }
 
   /**
-   * Stop hunt (and tasker when it owns the loop) on terminal finish reasons.
+   * Stop hunt (and tasker when it owns the loop) on terminal finish reasons
+   * (`insufficient_gold`, `stamina_depleted`). Not used for `insufficient_capacity`.
    * Runs even when auto-hunt restart is disabled because tasker controls hunts.
    */
   private async handleTerminalHuntFinishReason(
-    reason: "insufficient_gold" | "stamina_depleted"
+    reason: TerminalHuntFinishReason
   ): Promise<void> {
     await this.traceFlow("terminal-finish", async (trace) => {
       const session = this.ctx.session;
@@ -457,6 +481,7 @@ export class HuntService extends Service {
       const settings = this.ctx.settings.get();
 
       if (message.type === ReceiveMessageTypes.HUNT_FINISHED) {
+        const reason = message.data?.reason;
         const isLeader = isPartyLeader(this.identity());
         const selectedHuntId = this.battle.selectedHuntId;
         const handlingLoot = this.isLootBlockingRestart();
@@ -471,6 +496,17 @@ export class HuntService extends Service {
           }
         );
 
+        // Capacity finish: bag full — loot sell (if armed) then restart. Not terminal.
+        if (isCapacityHuntFinishReason(reason)) {
+          updatePlayerState(
+            this.ctx.session,
+            "idling",
+            deferForLoot || handlingLoot
+              ? "Finished by capacity — selling then restarting"
+              : "Finished by capacity — restarting"
+          );
+        }
+
         trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
         trace.guard("defer_for_loot", !deferForLoot, deferForLoot ? "loot owns finish" : undefined);
         if (handlingLoot || deferForLoot) {
@@ -478,9 +514,7 @@ export class HuntService extends Service {
           return;
         }
 
-        const reason = message.data?.reason;
-
-        if (reason === "insufficient_gold" || reason === "stamina_depleted") {
+        if (isTerminalHuntFinishReason(reason)) {
           // Handled in onEvent via handleTerminalHuntFinishReason (also covers tasker).
           await this.handleTerminalHuntFinishReason(reason);
           return;
@@ -492,10 +526,12 @@ export class HuntService extends Service {
           autoHuntEnabled: settings.autoHuntEnabled,
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot: false,
+          allPartyMembersOnline: this.allPartyMembersOnline(),
         });
         trace.guard("can_restart", canRestart);
         trace.guard("is_leader", isLeader);
         trace.guard("has_selected_hunt", selectedHuntId != null);
+        trace.guard("party_members_online", this.allPartyMembersOnline());
         trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
         if (!canRestart || selectedHuntId == null) {
@@ -539,6 +575,7 @@ export class HuntService extends Service {
           autoTaskerEnabled: settings.autoTaskerEnabled,
           handlingLoot,
           alreadyHunting: alreadyHunting || awaitingReady,
+          allPartyMembersOnline: this.allPartyMembersOnline(),
         });
 
         trace.guard("handling_loot", !handlingLoot, handlingLoot ? "blocked" : undefined);
@@ -547,6 +584,7 @@ export class HuntService extends Service {
         trace.guard("hunt_valid", huntValid);
         trace.guard("not_already_hunting", !alreadyHunting);
         trace.guard("not_awaiting_ready", !awaitingReady);
+        trace.guard("party_members_online", this.allPartyMembersOnline());
         trace.guard("bless_synced", this.blessState.blessSnapshotSynced);
 
         if (!canRestart || selectedHuntId == null || !huntValid) {
@@ -625,6 +663,17 @@ export class HuntService extends Service {
       this.setFlowPhase("active");
       trace?.finish("skipped", { error: "already hunting" });
       return { ok: true };
+    }
+
+    const offlineMembers = this.offlinePartyMembers();
+    const partyOnline = offlineMembers.length === 0;
+    trace?.guard("party_members_online", partyOnline);
+    if (!partyOnline) {
+      const error = waitingForPartyOnlineMessage(offlineMembers);
+      updatePlayerState(session, "idling", error);
+      this.setFlowPhase("idle", { lastError: error });
+      trace?.finish("ok", { error, result: { deferred: true } });
+      return { ok: false, deferred: true, error };
     }
 
     if (isInActiveTraining(session)) {
@@ -913,15 +962,22 @@ export class HuntService extends Service {
 
       if (!this.isHunting()) {
         const result = await this.startHuntInternal(huntId, { force: true }, trace);
-        if (!result.ok) {
+        if (!result.ok && !result.deferred) {
           return { ok: false as const, error: result.error ?? "Failed to start hunt." };
+        }
+        session.updateSettings({ autoHuntEnabled: true });
+        this.battle.setSelectedHuntId(huntId);
+        if (result.deferred) {
+          return {
+            ok: true as const,
+            message: result.error ?? "Auto hunt enabled — waiting for party members to come online.",
+          };
         }
       } else {
         this.setFlowPhase("active");
+        session.updateSettings({ autoHuntEnabled: true });
+        this.battle.setSelectedHuntId(huntId);
       }
-
-      session.updateSettings({ autoHuntEnabled: true });
-      this.battle.setSelectedHuntId(huntId);
 
       return {
         ok: true as const,

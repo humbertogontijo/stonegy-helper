@@ -31,8 +31,15 @@ import {
   expectedAbilityCastFrontSweep,
   expectedAbilityCastBatchedMultiCast,
   expectedSupportAbilityCastUtitoTempo,
-  expectedCombatDamage52,
-  expectedCompactCombatDamage0,
+  expectedCombatFloatHeal52,
+  expectedCombatFloatMultiHit,
+  expectedCombatFloatFire700,
+  expectedCooldownUpdateAttackCast,
+  expectedCooldownUpdatePotionAndHeal,
+  expectedVitalsSingleBit0,
+  expectedVitalsBits02,
+  expectedVitalsMixed27,
+  expectedVitalsSharedBit4,
   expectedHuntEntityUuidList,
   expectedHuntLootDrops,
   expectedHuntLootStarterItemGrant,
@@ -168,8 +175,27 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(["Divine Caldera", "Carniphila"]);
-    expect(message.body.data.header.effectId).toBe(271);
-    expect(message.body.data.effects).toHaveLength(5);
+    expect(message.body.data.actors).toEqual([
+      {
+        tag: 0x0f,
+        runtimePlayerId: 1,
+        abilityIndex: 0,
+        abilityName: "Divine Caldera",
+      },
+    ]);
+    const monsterHits = message.body.data.combatHits.filter(
+      (hit) => hit.target === "monster"
+    );
+    expect(monsterHits).toHaveLength(4);
+    expect(
+      monsterHits.every(
+        (hit) =>
+          hit.attackerRuntimePlayerId === 1 &&
+          hit.abilityName === "Divine Caldera" &&
+          hit.school === 6 &&
+          hit.monsterName === "Carniphila"
+      )
+    ).toBe(true);
   });
 
   it("decodes auto attack frames with embedded strings", () => {
@@ -186,8 +212,16 @@ describe("decodeBinaryMessage", () => {
       "/inventory/Elvish_Bow.gif",
       "Carniphila",
     ]);
-    expect(message.body.data.targetCount).toBe(2);
-    expect(message.body.data.targets).toHaveLength(2);
+    expect(message.body.data.combatHits).toHaveLength(2);
+    expect(message.body.data.combatHits[1]).toMatchObject({
+      target: "monster",
+      amount: 96,
+      school: 8,
+      attackerRuntimePlayerId: 1,
+      abilityName: "Auto-Attack",
+      weaponName: "/inventory/Elvish_Bow.gif",
+      monsterName: "Carniphila",
+    });
   });
 
   it("decodes type-0x12 ability cast frames with the auto attack layout", () => {
@@ -204,8 +238,9 @@ describe("decodeBinaryMessage", () => {
       "/inventory/Elvish_Bow.gif",
       "Carniphila",
     ]);
-    expect(message.body.data.targetCount).toBe(2);
-    expect(message.body.data.targets).toHaveLength(2);
+    expect(message.body.data.combatHits.filter((hit) => hit.target === "monster")).toHaveLength(
+      1
+    );
   });
 
   it("decodes type-0x12 support ability casts without decode failures", () => {
@@ -225,45 +260,20 @@ describe("decodeBinaryMessage", () => {
     );
   });
 
-  it("decodes equipment-heavy auto attacks without decode failures", () => {
+  it("degrades truncated string-table attack frames to unknown", () => {
+    // Claims 8 strings but the payload is cut after the fifth.
     const message = decodeBinaryMessage(
       "U0cFGQgLAEF1dG8tQXR0YWNrHgAvaW52ZW50b3J5L05pZ2h0bWFyZV9CbGFkZS5naWYVAFNvdWwtQnJva2VuIEhhcmJpbmdlch4AL2ludmVudG9yeS9XYW5kX09mX0luZmVybm8uZ2lmIgAvaW52ZW50b3J5L0RyYWdvbmljX01haWwuZ2lm"
     );
 
-    expect(message.body.kind).toBe("auto_attack");
-    if (message.body.kind !== "auto_attack") {
-      throw new Error("expected auto_attack body");
+    expect(message.body.kind).toBe("unknown");
+    if (message.body.kind !== "unknown") {
+      throw new Error("expected unknown body");
     }
-
-    expect(message.body.data.strings).toEqual([
-      "Auto-Attack",
-      "/inventory/Nightmare_Blade.gif",
-      "Soul-Broken Harbinger",
-      "/inventory/Wand_Of_Inferno.gif",
-    ]);
-    expect(summarizeBinaryMessage(message)).toContain("Nightmare_Blade.gif");
+    expect(message.body.data.error).toBeTruthy();
   });
 
-  it("decodes equipment-heavy auto attacks with a 0x07 string-layout lead byte", () => {
-    const message = decodeBinaryMessage(
-      "U0cFGQcLAEF1dG8tQXR0YWNrHgAvaW52ZW50b3J5L05pZ2h0bWFyZV9CbGFkZS5naWYVAFNvdWwtQnJva2VuIEhhcmJpbmdlch4AL2ludmVudG9yeS9XYW5kX09mX0luZmVybm8uZ2lmIgAvaW52ZW50b3J5L0RyYWdvbmljX01haWwuZ2lm"
-    );
-
-    expect(message.body.kind).toBe("auto_attack");
-    if (message.body.kind !== "auto_attack") {
-      throw new Error("expected auto_attack body");
-    }
-
-    expect(message.body.data.strings).toEqual([
-      "Auto-Attack",
-      "/inventory/Nightmare_Blade.gif",
-      "Soul-Broken Harbinger",
-      "/inventory/Wand_Of_Inferno.gif",
-    ]);
-    expect(message.body.data.effects).toHaveLength(2);
-  });
-
-  it("decodes Front Sweep casts with eight hybrid-sized targets", () => {
+  it("decodes Front Sweep casts with eight combat records", () => {
     const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastFrontSweepEightTargets);
 
     expect(message.body.kind).toBe("auto_attack");
@@ -272,12 +282,21 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(["Front Sweep", "Soul-Broken Harbinger"]);
-    expect(message.body.data.targetCount).toBe(8);
-    expect(message.body.data.targets).toHaveLength(8);
-    expect(message.body.data.effects).toHaveLength(0);
+    expect(message.body.data.combatHits).toHaveLength(8);
+    expect(
+      message.body.data.combatHits.filter((hit) => hit.target === "monster")
+    ).toEqual([
+      expect.objectContaining({
+        amount: 210,
+        school: 8,
+        attackerRuntimePlayerId: 1,
+        abilityName: "Front Sweep",
+        monsterName: "Soul-Broken Harbinger",
+      }),
+    ]);
   });
 
-  it("decodes multi-target ability casts without a timestamp", () => {
+  it("decodes multi-record Front Sweep casts with attributed hits", () => {
     const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastFrontSweep);
 
     expect(message.envelope.type).toBe(StonegyBinaryMessageType.AutoAttack);
@@ -287,16 +306,18 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(expectedAbilityCastFrontSweep.strings);
-    expect(message.body.data.targetCount).toBe(expectedAbilityCastFrontSweep.targetCount);
-    expect(message.body.data.timestamp).toBe(0);
-    expect(message.body.data.targets).toEqual(expectedAbilityCastFrontSweep.targets);
-    expect((message.body.data as { rawTail?: Uint8Array }).rawTail).toBeUndefined();
+    expect(message.body.data.combatHits).toHaveLength(
+      expectedAbilityCastFrontSweep.combatHitCount
+    );
+    expect(
+      message.body.data.combatHits.filter((hit) => hit.target === "monster")
+    ).toEqual([expect.objectContaining(expectedAbilityCastFrontSweep.monsterHit)]);
     expect(summarizeBinaryMessage(message)).toBe(
-      "auto_attack(Front Sweep / Soul-Broken Harbinger)"
+      "auto_attack(Front Sweep / Soul-Broken Harbinger, 1 monster hits)"
     );
   });
 
-  it("decodes batched multi-cast frames with fully decoded target records", () => {
+  it("decodes batched multi-cast frames with per-caster attribution", () => {
     const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastBatchedMultiCast);
 
     expect(message.envelope.type).toBe(StonegyBinaryMessageType.AutoAttack);
@@ -306,14 +327,20 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(expectedAbilityCastBatchedMultiCast.strings);
-    expect(message.body.data.targets.length).toBeGreaterThan(0);
-    expect(message.body.data.batchLead).toBe(16);
+    const dealtByAbility = message.body.data.combatHits
+      .filter((hit) => hit.target === "monster")
+      .reduce<Record<string, number>>((acc, hit) => {
+        const key = `${hit.attackerRuntimePlayerId}:${hit.abilityName}`;
+        acc[key] = (acc[key] ?? 0) + hit.amount;
+        return acc;
+      }, {});
+    expect(dealtByAbility).toEqual(expectedAbilityCastBatchedMultiCast.dealtByAbility);
     expect(summarizeBinaryMessage(message)).toBe(
-      "auto_attack(Fierce Berserk / Soul-Broken Harbinger / Terra Wave / Great Fire Wave)"
+      "auto_attack(Fierce Berserk / Soul-Broken Harbinger / Terra Wave / Great Fire Wave, 6 monster hits)"
     );
   });
 
-  it("decodes a second batched multi-cast frame with timestamp tail", () => {
+  it("decodes a second batched multi-cast frame", () => {
     const message = decodeBinaryMessage(huntTrafficFixtures.abilityCastBatchedMultiCast2);
 
     expect(message.body.kind).toBe("auto_attack");
@@ -322,10 +349,27 @@ describe("decodeBinaryMessage", () => {
     }
 
     expect(message.body.data.strings).toEqual(["Berserk", "Silencer", "Avalanche Rune"]);
-    expect(message.body.data.targetCount).toBe(6);
-    expect(message.body.data.timestamp).toBeGreaterThan(0);
+    expect(message.body.data.combatHits).toHaveLength(6);
+    expect(
+      message.body.data.combatHits.filter((hit) => hit.target === "monster")
+    ).toEqual([
+      expect.objectContaining({
+        amount: 143,
+        school: 8,
+        attackerRuntimePlayerId: 1,
+        abilityName: "Berserk",
+        monsterName: "Silencer",
+      }),
+      expect.objectContaining({
+        amount: 10,
+        school: 3,
+        attackerRuntimePlayerId: 2,
+        abilityName: "Avalanche Rune",
+        monsterName: "Silencer",
+      }),
+    ]);
     expect(summarizeBinaryMessage(message)).toBe(
-      "auto_attack(Berserk / Silencer / Avalanche Rune)"
+      "auto_attack(Berserk / Silencer / Avalanche Rune, 2 monster hits)"
     );
   });
 
@@ -529,27 +573,101 @@ describe("decodeBinaryMessage", () => {
     expect(summarizeBinaryMessage(entityList)).toBe("entity_uuid_list(6 uuids)");
   });
 
-  it("decodes short combat damage frames separately from auto attack strings", () => {
-    const message = decodeBinaryMessage(huntTrafficFixtures.combatDamage52);
+  it("decodes short combat_float frames separately from auto attack strings", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.combatFloatHeal52);
 
     expect(message.envelope.type).toBe(StonegyBinaryMessageType.AutoAttack);
-    expect(message.body.kind).toBe("combat_damage");
-    if (message.body.kind !== "combat_damage") {
-      throw new Error("expected combat_damage body");
+    expect(message.body.kind).toBe("combat_float");
+    if (message.body.kind !== "combat_float") {
+      throw new Error("expected combat_float body");
     }
-    expect(message.body.data).toEqual(expectedCombatDamage52);
+    expect(message.body.data).toEqual(expectedCombatFloatHeal52);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "combat_float(1 hits: 52 on 1@(0,0) cat=2/0x604)"
+    );
   });
 
-  it("decodes compact type-0x09 combat hits as combat_damage", () => {
-    const message = decodeBinaryMessage(huntTrafficFixtures.compactCombatDamage0);
+  it("decodes batched multi-hit combat_float frames", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.combatFloatMultiHit);
 
-    expect(message.envelope.type).toBe(StonegyBinaryMessageType.VitalDelta);
-    expect(message.body.kind).toBe("combat_damage");
-    if (message.body.kind !== "combat_damage") {
-      throw new Error("expected combat_damage body");
+    expect(message.envelope.type).toBe(StonegyBinaryMessageType.AutoAttack);
+    expect(message.body.kind).toBe("combat_float");
+    if (message.body.kind !== "combat_float") {
+      throw new Error("expected combat_float body");
     }
-    expect(message.body.data).toEqual(expectedCompactCombatDamage0);
-    expect(summarizeBinaryMessage(message)).toBe("damage(0 from 1 to 1)");
+    expect(message.body.data).toEqual(expectedCombatFloatMultiHit);
+  });
+
+  it("decodes fire damage combat_float frames", () => {
+    const message = decodeBinaryMessage(huntTrafficFixtures.combatFloatFire700);
+
+    expect(message.body.kind).toBe("combat_float");
+    if (message.body.kind !== "combat_float") {
+      throw new Error("expected combat_float body");
+    }
+    expect(message.body.data).toEqual(expectedCombatFloatFire700);
+    expect(summarizeBinaryMessage(message)).toBe(
+      "combat_float(1 hits: 700 on 1@(0,0) cat=0/0x204)"
+    );
+  });
+
+  it("decodes type-0x08 cooldown updates with paired spell/group expiries", () => {
+    const attack = decodeBinaryMessage(huntTrafficFixtures.cooldownUpdateAttackCast);
+    expect(attack.envelope.type).toBe(StonegyBinaryMessageType.CooldownUpdate);
+    expect(attack.body.kind).toBe("cooldown_update");
+    if (attack.body.kind !== "cooldown_update") {
+      throw new Error("expected cooldown_update body");
+    }
+    expect(attack.body.data).toEqual(expectedCooldownUpdateAttackCast);
+    expect(summarizeBinaryMessage(attack)).toBe(
+      "cooldown_update(1 records g1:slot2@1784323007709, slot1@1784323005709)"
+    );
+
+    const mixed = decodeBinaryMessage(huntTrafficFixtures.cooldownUpdatePotionAndHeal);
+    expect(mixed.body.kind).toBe("cooldown_update");
+    if (mixed.body.kind !== "cooldown_update") {
+      throw new Error("expected cooldown_update body");
+    }
+    expect(mixed.body.data).toEqual(expectedCooldownUpdatePotionAndHeal);
+  });
+
+  it("decodes type-0x09 masked vital updates across payload sizes", () => {
+    const single = decodeBinaryMessage(huntTrafficFixtures.vitalsSingleBit0);
+    expect(single.envelope.type).toBe(StonegyBinaryMessageType.Vitals);
+    expect(single.body.kind).toBe("vitals");
+    if (single.body.kind !== "vitals") {
+      throw new Error("expected vitals body");
+    }
+    expect(single.body.data).toEqual(expectedVitalsSingleBit0);
+    expect(summarizeBinaryMessage(single)).toBe("vitals(1 records 1:{bit0=1540})");
+
+    const bits02 = decodeBinaryMessage(huntTrafficFixtures.vitalsBits02);
+    expect(bits02.body.kind).toBe("vitals");
+    if (bits02.body.kind !== "vitals") {
+      throw new Error("expected vitals body");
+    }
+    expect(bits02.body.data).toEqual(expectedVitalsBits02);
+
+    const mixed = decodeBinaryMessage(huntTrafficFixtures.vitalsMixed27);
+    expect(mixed.body.kind).toBe("vitals");
+    if (mixed.body.kind !== "vitals") {
+      throw new Error("expected vitals body");
+    }
+    expect(mixed.body.data).toEqual(expectedVitalsMixed27);
+
+    const shared = decodeBinaryMessage(huntTrafficFixtures.vitalsSharedBit4);
+    expect(shared.body.kind).toBe("vitals");
+    if (shared.body.kind !== "vitals") {
+      throw new Error("expected vitals body");
+    }
+    expect(shared.body.data).toEqual(expectedVitalsSharedBit4);
+
+    const winter = decodeBinaryMessage(winterCourtTrafficFixtures.vitals);
+    expect(winter.body.kind).toBe("vitals");
+    if (winter.body.kind !== "vitals") {
+      throw new Error("expected vitals body");
+    }
+    expect(winter.body.data).toEqual(expectedWinterCourt.vitals);
   });
 
   it("decodes session metric and player vitals hunt frames", () => {

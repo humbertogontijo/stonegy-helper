@@ -4,7 +4,9 @@ import {
   canRestartHunt,
   enableAutoHuntBlockReason,
   isAutoHuntRestartEnabled,
+  isCapacityHuntFinishReason,
   isPostHuntLootBlocking,
+  isTerminalHuntFinishReason,
   shouldDeferHuntRestartForLootFinish,
 } from "./guards";
 
@@ -25,6 +27,22 @@ describe("isAutoHuntRestartEnabled", () => {
     expect(
       isAutoHuntRestartEnabled({ autoHuntEnabled: false, autoTaskerEnabled: false })
     ).toBe(false);
+  });
+});
+
+describe("isTerminalHuntFinishReason / isCapacityHuntFinishReason", () => {
+  it("treats gold and stamina as terminal stops", () => {
+    expect(isTerminalHuntFinishReason("insufficient_gold")).toBe(true);
+    expect(isTerminalHuntFinishReason("stamina_depleted")).toBe(true);
+    expect(isTerminalHuntFinishReason("insufficient_capacity")).toBe(false);
+    expect(isTerminalHuntFinishReason("hunt_left")).toBe(false);
+    expect(isTerminalHuntFinishReason(undefined)).toBe(false);
+  });
+
+  it("recognizes capacity finish for sell-then-restart", () => {
+    expect(isCapacityHuntFinishReason("insufficient_capacity")).toBe(true);
+    expect(isCapacityHuntFinishReason("insufficient_gold")).toBe(false);
+    expect(isCapacityHuntFinishReason("hunt_left")).toBe(false);
   });
 });
 
@@ -84,6 +102,10 @@ describe("canRestartHunt", () => {
 
   it("blocks when already hunting", () => {
     expect(canRestartHunt({ ...base, alreadyHunting: true })).toBe(false);
+  });
+
+  it("blocks when a party member is offline", () => {
+    expect(canRestartHunt({ ...base, allPartyMembersOnline: false })).toBe(false);
   });
 });
 
@@ -150,6 +172,10 @@ describe("canAutoHuntClaimIdle", () => {
 
   it("does not claim when tasker controls hunt", () => {
     expect(canAutoHuntClaimIdle({ ...base, autoTaskerEnabled: true })).toBe(false);
+  });
+
+  it("does not claim while a party member is offline", () => {
+    expect(canAutoHuntClaimIdle({ ...base, allPartyMembersOnline: false })).toBe(false);
   });
 });
 

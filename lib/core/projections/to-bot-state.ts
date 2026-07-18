@@ -34,6 +34,7 @@ export function toBotState(
     market: view.market,
     quests: view.quests,
     bless: view.bless,
+    combat: view.combat,
     playerState: view.playerState,
     playerStateDetail: view.playerStateDetail,
     battlePreset: resolveBattlePreset(configured, view.battlePreset),

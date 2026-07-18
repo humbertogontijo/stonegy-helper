@@ -13,6 +13,7 @@ import { InventoryState } from "./states/inventory.state";
 import { MarketState } from "./states/market.state";
 import { TasksState } from "./states/tasks.state";
 import { BlessState } from "./states/bless.state";
+import { CombatState } from "./states/combat.state";
 
 /** Register domain *State services then core automation services. */
 export function registerDefaultServices(registry: ServiceRegistry): void {
@@ -26,6 +27,7 @@ export function registerDefaultServices(registry: ServiceRegistry): void {
   const marketState = new MarketState(ctx);
   const tasksState = new TasksState(ctx, session);
   const bless = new BlessState(ctx);
+  const combat = new CombatState(ctx, session);
 
   registry.registerDomain(party);
   registry.registerDomain(session);
@@ -35,6 +37,7 @@ export function registerDefaultServices(registry: ServiceRegistry): void {
   registry.registerDomain(marketState);
   registry.registerDomain(tasksState);
   registry.registerDomain(bless);
+  registry.registerDomain(combat);
 
   const market = new MarketService(ctx, marketState, inventory, session, party, hunt);
   const battle = new BattleService(ctx, hunt, party, session);

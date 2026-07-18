@@ -83,6 +83,10 @@ describe("party snapshot state", () => {
         partyStatus: "idle",
         partyLeaderId: "other",
         partyMemberCount: 2,
+        partyMembers: [
+          { id: "char-1", name: "Hero", isOnline: true },
+          { id: "other", name: "Mate", isOnline: false },
+        ],
       },
     });
 
@@ -99,7 +103,33 @@ describe("party snapshot state", () => {
       partyStatus: null,
       partyLeaderId: null,
       partyMemberCount: null,
+      partyMembers: [],
       currentHuntId: null,
+    });
+  });
+
+  it("tracks party member online status from snapshot", async () => {
+    const next = await botStateAfterMessage({
+      type: ReceiveMessageTypes.PARTY_SNAPSHOT,
+      data: {
+        meId: "char-1",
+        party: {
+          status: "idle",
+          leaderId: "char-1",
+          members: [
+            { id: "char-1", name: "Hero", isOnline: true },
+            { id: "mate-1", name: "AllyA", isOnline: false },
+          ],
+        },
+      },
+    });
+
+    expect(next.party).toMatchObject({
+      partyMemberCount: 2,
+      partyMembers: [
+        { id: "char-1", name: "Hero", isOnline: true },
+        { id: "mate-1", name: "AllyA", isOnline: false },
+      ],
     });
   });
 
@@ -130,6 +160,7 @@ describe("party snapshot state", () => {
       currentHuntId: null,
       partyLeaderId: null,
       partyMemberCount: null,
+      partyMembers: [],
       partySnapshotSynced: true,
       lastSnapshotAt: expect.any(Number),
       partyLootSplitter: null,

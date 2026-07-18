@@ -43,5 +43,18 @@
       "16": "public/icons/icon16.png",
       "32": "public/icons/icon32.png"
     }
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup/index.html",
+        "popup/**",
+        "assets/**"
+      ],
+      "matches": [
+        "https://stonegy-online.com/*",
+        "https://*.stonegy-online.com/*"
+      ]
+    }
+  ]
 }

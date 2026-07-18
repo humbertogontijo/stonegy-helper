@@ -438,16 +438,16 @@ export class ExtensionSessionHost {
         }
         return this.handleWsBridgeEvent(message, sender);
 
-      case "overlay:get-state": {
+      case "damage-analyzer:get-state": {
         if (!isBridgeTabSender(sender) || !this.isBoundTab(sender.tab?.id)) {
-          return { ok: false, error: "Overlay state is restricted to the bound game tab" };
+          return { ok: false, error: "Damage analyzer state is restricted to the bound game tab" };
         }
         return { ok: true, state: this.state };
       }
 
-      case "overlay:reset-damage": {
+      case "damage-analyzer:reset": {
         if (!isBridgeTabSender(sender) || !this.isBoundTab(sender.tab?.id)) {
-          return { ok: false, error: "Overlay reset is restricted to the bound game tab" };
+          return { ok: false, error: "Damage analyzer reset is restricted to the bound game tab" };
         }
         this.session.services.getDomain<CombatState>("combatState").reset();
         this.session.invalidateProjection();

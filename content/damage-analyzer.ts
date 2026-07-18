@@ -43,24 +43,16 @@ function metricColumnHtml(sum: number, maxDps: number, elements: DamageElementSt
   </div>`;
 }
 
-function entityCardHtml(entity: DamageEntityStats): string {
+function entityRowHtml(entity: DamageEntityStats): string {
   return `<article class="entity">
     <div class="entity-name" title="${escapeAttr(entity.name)}">${escapeHtml(entity.name)}</div>
-    <div class="metrics">
-      <div class="metric-col">
-        <div class="metric-label">Dealt</div>
-        ${metricColumnHtml(entity.dealtSum, entity.dealtMaxDps, entity.dealtByElement)}
-      </div>
-      <div class="metric-col">
-        <div class="metric-label">Taken</div>
-        ${metricColumnHtml(entity.takenSum, entity.takenMaxDps, entity.takenByElement)}
-      </div>
-    </div>
+    ${metricColumnHtml(entity.dealtSum, entity.dealtMaxDps, entity.dealtByElement)}
+    ${metricColumnHtml(entity.takenSum, entity.takenMaxDps, entity.takenByElement)}
   </article>`;
 }
 
 /** Logged-in player first (name match), then ascending entityIndex. */
-function sortEntitiesForPager(
+function sortEntities(
   entities: DamageEntityStats[],
   characterName: string | null
 ): DamageEntityStats[] {
@@ -92,29 +84,20 @@ function escapeAttr(value: string): string {
 function renderBody(
   combat: CombatProjection,
   collapsed: boolean,
-  pageIndex: number,
   characterName: string | null
 ): string {
-  const entities = sortEntitiesForPager(combat.entities, characterName);
-  const total = entities.length;
-  const safeIndex = total === 0 ? 0 : Math.min(Math.max(pageIndex, 0), total - 1);
-  const entity = total > 0 ? entities[safeIndex] : null;
-
-  let body: string;
-  if (!entity) {
-    body = `<div class="empty">Waiting for combat…</div>`;
-  } else {
-    const atStart = safeIndex <= 0;
-    const atEnd = safeIndex >= total - 1;
-    body = `<div class="pager">
-      <button type="button" class="nav prev" aria-label="Previous player" ${atStart ? "disabled" : ""}>»</button>
-      <div class="page">
-        ${entityCardHtml(entity)}
-        <div class="page-indicator">${safeIndex + 1}/${total}</div>
+  const entities = sortEntities(combat.entities, characterName);
+  const body =
+    entities.length === 0
+      ? `<div class="empty">Waiting for combat…</div>`
+      : `<div class="list">
+      <div class="col-headers" aria-hidden="true">
+        <span></span>
+        <span>Dealt</span>
+        <span>Taken</span>
       </div>
-      <button type="button" class="nav next" aria-label="Next player" ${atEnd ? "disabled" : ""}>»</button>
+      ${entities.map(entityRowHtml).join("")}
     </div>`;
-  }
 
   return `
     <div class="panel ${collapsed ? "collapsed" : ""}">
@@ -130,7 +113,7 @@ function renderBody(
 }
 
 /** Matches Hunt Analyzer section chrome (MuiStack css-1qom4ns + h5 css-1d5mi08). */
-const OVERLAY_CSS = `
+const PANEL_CSS = `
 :host {
   display: block;
   width: 100%;
@@ -211,99 +194,58 @@ header {
   display: none;
 }
 
-.pager {
+.list {
   display: flex;
-  align-items: stretch;
+  flex-direction: column;
   gap: calc(var(--s) * 6px);
 }
 
-.page {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--s) * 4px);
+.col-headers,
+.entity {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--s) * 56px), 0.85fr) 1fr 1fr;
+  column-gap: calc(var(--s) * 6px);
+  align-items: start;
 }
 
-.nav {
-  flex: 0 0 calc(var(--s) * 18px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: calc(var(--s) * 2px);
-  background: linear-gradient(180deg, rgb(28, 36, 39), rgb(11, 16, 17));
-  color: #cdbe91;
-  font-family: beaufort-pro, sans-serif;
-  font-size: calc(var(--s) * 16px);
-  font-weight: 900;
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-}
-
-.nav.prev {
-  transform: rotate(180deg);
-}
-
-.nav:hover:not(:disabled) {
-  color: #f0e6d2;
-}
-
-.nav:disabled {
-  opacity: 0.28;
-  cursor: default;
-}
-
-.page-indicator {
-  text-align: center;
-  color: #5b5a56;
+.col-headers {
+  color: #a09b8c;
   font-size: calc(var(--s) * 11px);
   font-weight: 500;
-  line-height: 1;
+  line-height: 1.2;
 }
 
-.entity {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--s) * 3px);
+.col-headers span:not(:first-child) {
+  text-align: right;
+}
+
+.entity + .entity {
+  padding-top: calc(var(--s) * 6px);
+  border-top: 1px solid rgba(120, 90, 40, 0.2);
 }
 
 .entity-name {
   color: #ded3ca;
-  font-size: calc(var(--s) * 13px);
+  font-size: calc(var(--s) * 12px);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: calc(var(--s) * 8px);
-}
-
-.metric-col {
+.metric {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--s) * 2px);
-}
-
-.metric-label {
-  color: #a09b8c;
-  font-size: calc(var(--s) * 12px);
-  font-weight: 500;
-  line-height: 1.3;
+  align-items: flex-end;
+  gap: 1px;
+  text-align: right;
 }
 
 .metric .sum {
   color: #c89b3c;
-  font-size: calc(var(--s) * 13px);
+  font-size: calc(var(--s) * 12px);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
@@ -311,7 +253,7 @@ header {
 
 .metric .dps {
   color: #5b5a56;
-  font-size: calc(var(--s) * 11px);
+  font-size: calc(var(--s) * 10px);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -320,13 +262,14 @@ header {
 .elements {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 6px;
+  justify-content: flex-end;
+  gap: 2px 5px;
   margin-top: 1px;
 }
 
 .elements.empty-elements {
   color: #5b5a56;
-  font-size: calc(var(--s) * 11px);
+  font-size: calc(var(--s) * 10px);
 }
 
 .chip {
@@ -334,14 +277,14 @@ header {
   align-items: center;
   gap: 2px;
   color: #a09b8c;
-  font-size: calc(var(--s) * 11px);
+  font-size: calc(var(--s) * 10px);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .chip.text .type-label {
-  max-width: calc(var(--s) * 36px);
+  max-width: calc(var(--s) * 32px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -440,7 +383,7 @@ function attachIntoHuntAnalyzer(host: HTMLElement): boolean {
   return true;
 }
 
-export function mountDamageAnalyzerOverlay(): void {
+export function mountDamageAnalyzer(): void {
   if (document.getElementById(HOST_ID)) {
     return;
   }
@@ -450,7 +393,7 @@ export function mountDamageAnalyzerOverlay(): void {
 
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
-  style.textContent = OVERLAY_CSS;
+  style.textContent = PANEL_CSS;
   shadow.appendChild(style);
 
   const root = document.createElement("div");
@@ -459,63 +402,20 @@ export function mountDamageAnalyzerOverlay(): void {
   let collapsed = localStorage.getItem(COLLAPSED_KEY) === "1";
   let combat = emptyCombat();
   let characterName: string | null = null;
-  let pageIndex = 0;
-  let focusedEntityIndex: number | null = null;
-  let hasUserPaged = false;
   let paintQueued = false;
   let attachQueued = false;
   let lastScanAt = 0;
   let parentObserver: MutationObserver | null = null;
 
-  const syncPageIndex = () => {
-    const entities = sortEntitiesForPager(combat.entities, characterName);
-    if (entities.length === 0) {
-      pageIndex = 0;
-      focusedEntityIndex = null;
-      hasUserPaged = false;
-      return;
-    }
-    if (focusedEntityIndex != null) {
-      const found = entities.findIndex((row) => row.entityIndex === focusedEntityIndex);
-      if (found >= 0) {
-        pageIndex = found;
-        return;
-      }
-    }
-    pageIndex = Math.min(Math.max(pageIndex, 0), entities.length - 1);
-    focusedEntityIndex = entities[pageIndex]?.entityIndex ?? null;
-  };
-
   const paintNow = () => {
-    syncPageIndex();
-    root.innerHTML = renderBody(combat, collapsed, pageIndex, characterName);
+    root.innerHTML = renderBody(combat, collapsed, characterName);
     root.querySelector(".toggle")?.addEventListener("click", () => {
       collapsed = !collapsed;
       localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
       paintNow();
     });
     root.querySelector(".reset")?.addEventListener("click", () => {
-      void chrome.runtime.sendMessage({ channel: "overlay:reset-damage" }).catch(() => {});
-    });
-    root.querySelector(".nav.prev")?.addEventListener("click", () => {
-      if (pageIndex <= 0) {
-        return;
-      }
-      hasUserPaged = true;
-      pageIndex -= 1;
-      const entities = sortEntitiesForPager(combat.entities, characterName);
-      focusedEntityIndex = entities[pageIndex]?.entityIndex ?? null;
-      paintNow();
-    });
-    root.querySelector(".nav.next")?.addEventListener("click", () => {
-      const entities = sortEntitiesForPager(combat.entities, characterName);
-      if (pageIndex >= entities.length - 1) {
-        return;
-      }
-      hasUserPaged = true;
-      pageIndex += 1;
-      focusedEntityIndex = entities[pageIndex]?.entityIndex ?? null;
-      paintNow();
+      void chrome.runtime.sendMessage({ channel: "damage-analyzer:reset" }).catch(() => {});
     });
   };
 
@@ -598,15 +498,7 @@ export function mountDamageAnalyzerOverlay(): void {
       combat = state.combat;
     }
     if (state.character && "characterName" in state.character) {
-      const nextName = state.character.characterName ?? null;
-      if (nextName !== characterName) {
-        characterName = nextName;
-        // Jump to self when identity arrives, unless the user already paged.
-        if (!hasUserPaged) {
-          pageIndex = 0;
-          focusedEntityIndex = null;
-        }
-      }
+      characterName = state.character.characterName ?? null;
     }
     schedulePaint();
   };
@@ -626,7 +518,7 @@ export function mountDamageAnalyzerOverlay(): void {
   );
 
   void chrome.runtime
-    .sendMessage({ channel: "overlay:get-state" })
+    .sendMessage({ channel: "damage-analyzer:get-state" })
     .then(
       (
         response:

@@ -145,8 +145,10 @@ export interface DamageEntityStats {
   name: string;
   dealtSum: number;
   dealtMaxDps: number;
+  dealtAvgDps: number;
   takenSum: number;
   takenMaxDps: number;
+  takenAvgDps: number;
   /** Sorted descending by amount. */
   dealtByElement: DamageElementStat[];
   takenByElement: DamageElementStat[];

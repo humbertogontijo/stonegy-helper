@@ -35,10 +35,16 @@ function formatElementChips(elements: DamageElementStat[]): string {
     .join("")}</span>`;
 }
 
-function metricColumnHtml(sum: number, maxDps: number, elements: DamageElementStat[]): string {
+function metricColumnHtml(
+  sum: number,
+  topDps: number,
+  avgDps: number,
+  elements: DamageElementStat[]
+): string {
   return `<div class="metric">
     <div class="sum">${formatNumber(sum)}</div>
-    <div class="dps" title="Max DPS">${formatNumber(maxDps)} Max DPS</div>
+    <div class="dps" title="TOP DPS">${formatNumber(topDps)} TOP DPS</div>
+    <div class="dps" title="AVG DPS">${formatNumber(avgDps)} AVG DPS</div>
     ${formatElementChips(elements)}
   </div>`;
 }
@@ -46,8 +52,18 @@ function metricColumnHtml(sum: number, maxDps: number, elements: DamageElementSt
 function entityRowHtml(entity: DamageEntityStats): string {
   return `<article class="entity">
     <div class="entity-name" title="${escapeAttr(entity.name)}">${escapeHtml(entity.name)}</div>
-    ${metricColumnHtml(entity.dealtSum, entity.dealtMaxDps, entity.dealtByElement)}
-    ${metricColumnHtml(entity.takenSum, entity.takenMaxDps, entity.takenByElement)}
+    ${metricColumnHtml(
+      entity.dealtSum,
+      entity.dealtMaxDps,
+      entity.dealtAvgDps,
+      entity.dealtByElement
+    )}
+    ${metricColumnHtml(
+      entity.takenSum,
+      entity.takenMaxDps,
+      entity.takenAvgDps,
+      entity.takenByElement
+    )}
   </article>`;
 }
 

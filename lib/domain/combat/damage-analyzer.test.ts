@@ -113,6 +113,25 @@ describe("damage analyzer", () => {
     });
   });
 
+  it("computes avg dps from session duration (floored to 1s)", () => {
+    let state = createDamageAnalyzerState();
+    state = recordHits(state, [{ runtimePlayerId: 1, amount: 100, asDealt: true }], 0);
+    state = recordHits(state, [{ runtimePlayerId: 1, amount: 100, asDealt: true }], 4_000);
+
+    const [row] = projectDamageEntities(state);
+    expect(row.dealtSum).toBe(200);
+    expect(row.dealtAvgDps).toBe(50);
+    expect(row.dealtMaxDps).toBe(100);
+  });
+
+  it("floors avg dps duration to at least one second", () => {
+    let state = createDamageAnalyzerState();
+    state = recordHits(state, [{ runtimePlayerId: 1, amount: 300 }], 5_000);
+
+    const [row] = projectDamageEntities(state);
+    expect(row.takenAvgDps).toBe(300);
+  });
+
   it("aggregates damage by element for dealt and taken", () => {
     let state = createDamageAnalyzerState();
     state = recordHits(

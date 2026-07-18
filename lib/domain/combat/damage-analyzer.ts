@@ -84,9 +84,15 @@ export interface DamageEntityStats {
   entityIndex: number;
   name: string;
   dealtSum: number;
+  /** Peak damage in any rolling 1s window. */
   dealtMaxDps: number;
+  /** dealtSum / session seconds (floored to ≥1s). */
+  dealtAvgDps: number;
   takenSum: number;
+  /** Peak damage in any rolling 1s window. */
   takenMaxDps: number;
+  /** takenSum / session seconds (floored to ≥1s). */
+  takenAvgDps: number;
   /** Sorted descending by amount. */
   dealtByElement: DamageElementStat[];
   takenByElement: DamageElementStat[];
@@ -279,6 +285,14 @@ function projectElements(
     .sort((a, b) => b.amount - a.amount || a.element - b.element);
 }
 
+function sessionAvgDps(sum: number, startedAt: number | null, updatedAt: number | null): number {
+  if (sum <= 0 || startedAt == null || updatedAt == null) {
+    return 0;
+  }
+  const elapsedSec = Math.max((updatedAt - startedAt) / 1000, 1);
+  return sum / elapsedSec;
+}
+
 export function projectDamageEntities(state: DamageAnalyzerState): DamageEntityStats[] {
   return [...state.entities.values()]
     .map((bucket) => ({
@@ -286,8 +300,10 @@ export function projectDamageEntities(state: DamageAnalyzerState): DamageEntityS
       name: entityDisplayName(bucket.entityIndex, bucket.name),
       dealtSum: bucket.dealtSum,
       dealtMaxDps: bucket.dealtMaxDps,
+      dealtAvgDps: sessionAvgDps(bucket.dealtSum, state.startedAt, state.updatedAt),
       takenSum: bucket.takenSum,
       takenMaxDps: bucket.takenMaxDps,
+      takenAvgDps: sessionAvgDps(bucket.takenSum, state.startedAt, state.updatedAt),
       dealtByElement: projectElements(bucket.dealtByElement, bucket.dealtSum),
       takenByElement: projectElements(bucket.takenByElement, bucket.takenSum),
     }))

@@ -455,6 +455,14 @@ export class ExtensionSessionHost {
         return { ok: true, state: this.state };
       }
 
+      case "popup:bind": {
+        if (!isBridgeTabSender(sender) || sender.tab?.id == null) {
+          return { ok: false, error: "Popup bind is restricted to Stonegy game tabs" };
+        }
+        this.bindTab(sender.tab.id);
+        return { ok: true };
+      }
+
       default:
         // Bot RPC is for the popup / extension pages only — not content scripts.
         if (sender.tab != null && !isPopupSender(sender)) {

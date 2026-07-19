@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-firefox/
+apps/server/dist/
 release/
 safari/
 .DS_Store

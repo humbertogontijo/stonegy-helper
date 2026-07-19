@@ -16,17 +16,17 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./popup/src/*"]
+      "@stonegy/helper/*": ["./packages/helper/src/*"],
+      "@stonegy/game-data/*": ["./packages/game-data/src/*"],
+      "@stonegy/ui/*": ["./packages/ui/src/*"]
     }
   },
   "include": [
-    "popup/src",
-    "lib",
-    "background",
-    "content",
-    "adapters",
-    "cli",
-    "chrome-env.d.ts",
-    "vite.config.ts"
+    "packages/*/src",
+    "apps/extension",
+    "apps/server/src",
+    "apps/server/client",
+    "apps/server/vite.config.ts",
+    "vitest.config.ts"
   ]
 }

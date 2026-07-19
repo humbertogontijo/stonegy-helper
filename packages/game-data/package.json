@@ -1,0 +1,9 @@
+{
+  "name": "@stonegy/game-data",
+  "version": "1.2.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  }
+}

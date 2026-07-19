@@ -1,0 +1,1 @@
+import "@stonegy/ui/main";

@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Stonegy Helper",
+  "version": "1.2.1",
+  "description": "Helper for Stonegy — reuses the game WebSocket on stonegy-online.com",
+  "incognito": "split",
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "scripting",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://stonegy-online.com/*",
+    "https://*.stonegy-online.com/*",
+    "https://api-stonegy.com/*",
+    "https://*.api-stonegy.com/*",
+    "http://127.0.0.1:17865/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://stonegy-online.com/*",
+        "https://*.stonegy-online.com/*"
+      ],
+      "js": [
+        "content/content.ts"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "32": "public/icons/icon32.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_title": "Stonegy Helper",
+    "default_icon": {
+      "16": "public/icons/icon16.png",
+      "32": "public/icons/icon32.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup/index.html",
+        "popup/**",
+        "assets/**"
+      ],
+      "matches": [
+        "https://stonegy-online.com/*",
+        "https://*.stonegy-online.com/*"
+      ]
+    }
+  ]
+}

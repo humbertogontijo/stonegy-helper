@@ -3,7 +3,7 @@
 [![CI](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/ci.yml/badge.svg)](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Browser extension and CLI that control [Stonegy](https://stonegy-online.com/) by **reusing the game's own WebSocket** to `wss://api-stonegy.com/`. The game page handles login and authentication; the extension only intercepts that connection and lets you send/read protocol messages.
+Browser extension and local Node helper that control [Stonegy](https://stonegy-online.com/). The extension **reuses the game's own WebSocket** on stonegy-online.com; the Node helper runs headless DirectWs sessions for party members and serves a party-driven UI on `http://127.0.0.1:17865`.
 
 Supports **Chrome**, **Firefox**, and **Safari** (macOS / iOS).
 
@@ -21,23 +21,34 @@ Download the latest artifacts from [GitHub Releases](https://github.com/humberto
 
 ## How it works
 
-1. A page script (`content/page-bridge.js`) wraps `window.WebSocket` before the game loads.
-2. When Stonegy opens `wss://api-stonegy.com/`, the extension captures that socket instance.
-3. Incoming/outgoing frames are mirrored to the background worker.
-4. Bot actions send JSON through the same socket the game uses — no separate auth token needed.
+Three communication planes (see [ARCHITECTURE.md](ARCHITECTURE.md) for details):
+
+1. **Game WS** — A page script (`apps/extension/content/page-bridge.iife.ts`) wraps `window.WebSocket` before the game loads. When Stonegy opens `wss://server-game-01.api-stonegy.com/`, the extension mirrors frames into a shared `GameSession`. Bot actions reuse that socket (no separate game auth). The local helper runs headless sessions over its own DirectWs connection with a JWT.
+2. **Extension↔helper control WS** — While the game tab is connected, the extension claims the character on `ws://127.0.0.1:17865/v1/extension` so the helper does not open a competing DirectWs session. Settings, live `BotState`, and UI commands for that character flow over this socket. On release or control-WS close, the claim is cleared; the character stays offline until you Connect manually in the helper UI.
+3. **UI** — The popup talks to the live character via `chrome.runtime`; managed party mates use HTTP + SSE against the local helper. Shared panels live in `@stonegy/ui`.
 
 ## Development setup
 
 ```bash
-npm install
+bun install
 ```
 
-Node.js 22+ recommended.
+This repo is a **Bun workspaces** monorepo:
+
+| Path | Package | Role |
+|------|---------|------|
+| `apps/extension` | `@stonegy/extension` | Chrome / Firefox / Safari extension |
+| `apps/server` | `@stonegy/server` | Local Hono host + multi-party UI |
+| `packages/helper` | `@stonegy/helper` | Shared bot runtime (protocol, domain, core) |
+| `packages/game-data` | `@stonegy/game-data` | Generated game catalogs |
+| `packages/ui` | `@stonegy/ui` | Shared React shell (extension popup + server UI) |
+
+Bun 1.3+ recommended.
 
 ## Chrome / Edge
 
 ```bash
-npm run build:chrome
+bun run build:chrome
 # → dist/ (load unpacked)
 # → release/stonegy-helper-chrome-v{version}.zip
 ```
@@ -52,13 +63,13 @@ For a release zip, unpack it and load that folder the same way.
 Dev with HMR:
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 ## Firefox
 
 ```bash
-npm run build:firefox
+bun run build:firefox
 # → dist-firefox/
 # → release/stonegy-helper-firefox-v{version}.zip
 ```
@@ -87,7 +98,7 @@ App Store / wide iOS distribution needs a paid Apple Developer Program membershi
 Requires Xcode and `xcrun safari-web-extension-converter`.
 
 ```bash
-npm run build:safari
+bun run build:safari
 # → safari/Stonegy Helper/ (Xcode project)
 # → release/stonegy-helper-safari-v{version}.zip
 ```
@@ -95,9 +106,9 @@ npm run build:safari
 Optional flags:
 
 ```bash
-node scripts/build-safari.mjs --xcodebuild   # also compile macOS Release (needs your local signing)
-node scripts/build-safari.mjs --open         # open the project in Xcode after conversion
-node scripts/build-safari.mjs --no-package   # skip the release zip
+bun apps/extension/scripts/build-safari.mjs --xcodebuild   # also compile macOS Release (needs your local signing)
+bun apps/extension/scripts/build-safari.mjs --open         # open the project in Xcode after conversion
+bun apps/extension/scripts/build-safari.mjs --no-package   # skip the release zip
 ```
 
 Optional local team (gitignored): create `safari-signing.local.json` so rebuilds keep your team ID:
@@ -108,57 +119,41 @@ Optional local team (gitignored): create `safari-signing.local.json` so rebuilds
 
 The pipeline builds into `dist/`, patches Safari-unsupported manifest keys (`world`, `type`, `use_dynamic_url`), bundles a classic background script, and converts to `safari/`.
 
-## CLI
+## Local server (multi-character / party)
 
-The CLI runs the bot headlessly over a direct WebSocket session (no browser tab required).
+`@stonegy/server` is a zero-arg local host that owns headless sessions and a party-driven UI (Hono API + Vite client on the same port).
 
 ```bash
-npm install
-npm run stonegy -- run
-npm run stonegy -- run --character "My Char"
-npm run stonegy -- run --token YOUR_TOKEN
+bun install
+bun run server            # Hono API + Vite UI on :17865 (dev middleware)
+# production UI:
+# bun run build:server && NODE_ENV=production bun run server
 ```
 
-If you omit `--token` / `STONEGY_TOKEN`, the CLI:
+Then open [http://127.0.0.1:17865](http://127.0.0.1:17865).
 
-1. Reuses `~/.stonegy-helper/auth.json` when present
-2. Otherwise opens a Chromium window to Stonegy’s login page (Cloudflare Turnstile included), waits for the session cookie after you sign in, and stores the JWT locally
-
-You only need to complete login (and optionally character select) — entering the game world is not required. Use `--login` to force a fresh browser login.
+- **Add login** opens a Chromium window for Stonegy login (Turnstile included), then lets you pick characters to save as profiles.
+- Click **Connect** on a profile to start a headless session (sessions are manual — nothing auto-connects).
+- The page renders one popup shell per distinct party.
+- Profiles and per-character settings live under `~/.stonegy-helper/` (`profiles.json`, `<characterUuid>.json`). Legacy `auth.json` is migrated into `profiles.json` as `lastAccountToken`.
 
 Environment variables:
 
 | Variable | Purpose |
 |----------|---------|
-| `STONEGY_TOKEN` | Bearer JWT (alternative to `--token`) |
 | `STONEGY_CHROME_PATH` | Optional path to Chrome/Chromium/Edge for browser login |
 
-Before starting, the CLI loads characters from `/api/character` and prompts you to pick one. Pass `--character <uuid|name>` to skip the prompt.
+The extension auto-probes `http://127.0.0.1:17865` (no pairing token). When the helper is running, party-member tabs in the extension popup can control managed remote characters over HTTP. Settings for the live (claimed) character sync over `/v1/extension`, not HTTP.
 
-Settings and feature master states are saved per character under `~/.stonegy-helper/`.
-
-Global install (optional):
-
-```bash
-npm link
-stonegy-helper run
-```
-
-### Interactive commands
-
-Once connected, use the menu to:
-
-- **Arm/disarm features** (Market, Loot, Battle, Hunt, Tasks)
-- **Toggle sub-features** (interval scan, auto hunt, auto tasker, etc.)
-- **Show full status** — party, hunt, and sub-feature states
-- **Quit** — graceful disconnect (Ctrl+C also works)
+When both the extension and helper are running, the extension shares the live game JWT with the helper via `POST /v1/credentials/sync` (from the WebSocket `auth` frame, or the `jwtToken` cookie as a fallback). That seeds `lastAccountToken` and upserts a profile for the live character. Use the helper UI’s **Add login** only when running the server without the extension. After updating the extension, reload it on the browser’s extensions page so the service worker picks up new permissions (`cookies`).
 
 ## Usage
 
-1. Open [https://stonegy-online.com/](https://stonegy-online.com/) and log in normally.
-2. Select your character so the game authenticates over WebSocket.
-3. Click the **Stonegy Helper** extension icon.
-4. Use the feature tabs — Market, Loot, Battle, Hunt, and Tasks.
+1. Optionally start the local server (`bun run server`) for multi-character headless sessions.
+2. Open [https://stonegy-online.com/](https://stonegy-online.com/) and log in normally.
+3. Select your character so the game authenticates over WebSocket.
+4. Click the **Stonegy Helper** extension icon — tabs are the live character’s party members.
+5. Use the feature tabs — Market, Loot, Battle, Hunt, and Tasks.
 
 ### Popup features
 
@@ -181,8 +176,8 @@ git push origin v1.0.0
 To bump versions locally (optional):
 
 ```bash
-npm run set-version -- 1.0.0
-git add package.json manifest.json && git commit -m "chore: release v1.0.0"
+bun run set-version -- 1.0.0
+git add package.json apps/extension/manifest.json apps/*/package.json packages/*/package.json && git commit -m "chore: release v1.0.0"
 ```
 
 The [Release](https://github.com/humbertogontijo/stonegy-helper/actions/workflows/release.yml) workflow builds Chrome, Firefox, and Safari artifacts and publishes a GitHub Release. You can also run it manually via **Actions → Release → Run workflow** (uses the current `package.json` version when not triggered by a tag).
@@ -214,7 +209,7 @@ Binary frames (opcode 2) are logged as base64 but most bot actions use JSON text
 
 ## Architecture
 
-The bot core lives in `lib/core/`:
+The bot core lives in `packages/helper` (`@stonegy/helper`):
 
 - **GameSession** — single message pipeline: normalize wire events → update projections → run workflows
 - **CommandBus** — send JSON commands on the game socket (ordered sends) and wait for typed responses via independent waiters (no polling sync)
@@ -223,31 +218,29 @@ The bot core lives in `lib/core/`:
 
 Adapters:
 
-- `adapters/extension/session-host.ts` — thin Chrome service worker glue (storage, popup RPC, page bridge)
-- `cli/main.ts` — headless CLI over direct WebSocket
+- `apps/extension/adapters/extension/session-host.ts` — thin Chrome service worker glue (storage, popup RPC, page bridge)
+- `apps/server/src/main.ts` — local Hono server, supervisor, DirectWs sessions, Vite-served party UI
 
 ```
 Game tab WebSocket → page-bridge → ExtensionSessionHost → GameSession
-CLI WebSocket      → DirectWsTransport            → GameSession
+Server DirectWs    → DirectWsTransport            → GameSession
+Extension popup / server UI ← BotTransport (chrome | HTTP+SSE)
 ```
 
 ## Project layout
 
 ```
-manifest.json
-background/service-worker.ts   # Extension entry (delegates to session-host)
-content/page-bridge.iife.js    # WebSocket hook (MAIN world, IIFE bundle)
-content/content.js             # Extension ↔ page bridge
-lib/core/                      # Event/command architecture
-adapters/                      # Extension + CLI adapters
-lib/page-bridge/               # Cross-browser page access (Chrome + Safari)
-lib/protocol.js                # Message builders
-popup/                         # Control panel UI
+apps/extension/                # Browser extension (Chrome / Firefox / Safari builds)
+apps/server/                   # Hono API + multi-party UI (Vite client)
+packages/helper/               # Shared bot runtime (@stonegy/helper)
+packages/game-data/            # Generated catalogs (@stonegy/game-data)
+packages/ui/                   # Shared React shell (@stonegy/ui)
+scripts/                       # Codegen + version tooling
 ```
 
 ## Extending the bot
 
-Add a service under `lib/core/services/` and register it in `lib/core/services/register.ts`. Services receive inbound events via `onEvent()` and are dispatched by `ServiceRegistry`. Use `session.commands.run(SendMessageTypes.…)` for outbound actions. Use `lib/protocol.ts` for typed message builders.
+Add a service under `packages/helper/src/core/services/` and register it in `packages/helper/src/core/services/register.ts`. Services receive inbound events via `onEvent()` and are dispatched by `ServiceRegistry`. Use `session.commands.run(SendMessageTypes.…)` for outbound actions. Use `@stonegy/helper/protocol` for typed message builders.
 
 Example custom send from popup:
 
@@ -262,18 +255,18 @@ Example custom send from popup:
 
 ## Regenerating game data
 
-`lib/data/{hunts,quests,monsters,items,battle-options}.ts` are generated from live Stonegy assets:
+`packages/game-data/src/{hunts,quests,monsters,items,battle-options}.ts` are generated from live Stonegy assets:
 
 ```bash
-npm run generate:game-data
+bun run generate:game-data
 ```
 
 The script verifies SHA256/record counts and stamps file headers. Re-run after game content updates.
 
-## Operational risks (CLI / store review)
+## Operational risks (helper / store review)
 
-- **CLI tokens** — prefer `STONEGY_TOKEN` or the stored login token over `--token` (argv is visible in `ps` / shell history). Interactive login writes `~/.stonegy-helper/auth.json` with mode `0600`.
-- **CLI Cloudflare bypass** — `got-scraping` impersonates a browser TLS fingerprint to reach `api-stonegy.com`. This is fragile and may violate game ToS; treat the CLI as best-effort.
+- **Helper tokens** — JWTs are stored in `~/.stonegy-helper/profiles.json` (mode `0600`). The localhost API trusts `127.0.0.1` with no pairing token. The extension keeps the live JWT in service-worker memory only and POSTs it to the helper; it is not written to `chrome.storage`.
+- **Helper Cloudflare bypass** — `got-scraping` impersonates a browser TLS fingerprint to reach `api-stonegy.com`. This is fragile and may violate game ToS; treat headless sessions as best-effort.
 - **Keep-alive** — the extension can simulate DOM activity and block idle WebSocket closes (codes 4001/4002) so AFK disconnects do not drop the session. Document this for store review.
 - **Mobile bypass** — on Safari/iOS the content script may spoof standalone display-mode to skip the “install as app” overlay.
 

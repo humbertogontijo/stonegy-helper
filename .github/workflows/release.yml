@@ -15,23 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: "22"
-          cache: npm
+          bun-version: latest
 
       - name: Sync version from tag
         if: github.ref_type == 'tag'
-        run: node scripts/set-version.mjs "${GITHUB_REF_NAME}"
+        run: bun scripts/set-version.mjs "${GITHUB_REF_NAME}"
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Build Chrome
-        run: npm run build:chrome
+        run: bun run build:chrome
 
       - name: Build Firefox
-        run: npm run build:firefox
+        run: bun run build:firefox
 
       - name: Upload browser zips
         uses: actions/upload-artifact@v4
@@ -46,20 +45,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: "22"
-          cache: npm
+          bun-version: latest
 
       - name: Sync version from tag
         if: github.ref_type == 'tag'
-        run: node scripts/set-version.mjs "${GITHUB_REF_NAME}"
+        run: bun scripts/set-version.mjs "${GITHUB_REF_NAME}"
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Build Safari Xcode project
-        run: npm run build:safari
+        run: bun run build:safari
 
       - name: Upload Safari zip
         uses: actions/upload-artifact@v4
@@ -72,6 +70,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Download browser zips
         uses: actions/download-artifact@v4
@@ -91,7 +93,7 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           else
-            VERSION=$(node -p "require('./package.json').version")
+            VERSION=$(bun -p "require('./package.json').version")
             echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
